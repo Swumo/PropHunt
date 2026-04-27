@@ -1,36 +1,56 @@
-package me.Swumo.PropHunt;
+package me.swumo.prophunt;
 
-import me.Swumo.PropHunt.Commands.PropHuntCommand;
-import me.Swumo.PropHunt.Game.GameManager;
-import me.Swumo.PropHunt.Listeners.GameListeners;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import io.papermc.paper.command.brigadier.CommandSourceStack;
+import lombok.Getter;
+import me.swumo.prophunt.commands.PropHuntCommand;
+import me.swumo.prophunt.game.GameManager;
+import me.swumo.prophunt.listeners.GameListeners;
+import me.swumo.prophunt.platform.PlatformScheduler;
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.plugin.java.JavaPlugin;
+import org.incendo.cloud.annotations.AnnotationParser;
+import org.incendo.cloud.execution.ExecutionCoordinator;
+import org.incendo.cloud.minecraft.extras.MinecraftHelp;
+import org.incendo.cloud.paper.PaperCommandManager;
+import xyz.xenondevs.invui.InvUI;
+
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import org.bukkit.ChatColor;
-import org.bukkit.Bukkit;
-import org.bukkit.plugin.java.JavaPlugin;
 
 public class PropHunt extends JavaPlugin {
     private static final Pattern GRADIENT_PATTERN = Pattern
             .compile("<gradient:(#[A-Fa-f0-9]{6}):(#[A-Fa-f0-9]{6})>(.*?)</gradient>", Pattern.DOTALL);
     private static final Pattern HEX_PATTERN = Pattern.compile("&#([A-Fa-f0-9]{6})");
-    private static PropHunt instance;
-    private GameManager gameManager;
+    @Getter private static PropHunt instance;
+    @Getter private GameManager gameManager;
+    @Getter private PlatformScheduler platformScheduler;
 
     @Override
     public void onEnable() {
         instance = this;
         saveDefaultConfig();
+        platformScheduler = new PlatformScheduler(this);
+        getLogger().info("Detected platform: " + (platformScheduler.isFolia() ? "Folia" : "Paper"));
+        InvUI.getInstance().setPlugin(this);
         gameManager = new GameManager(this);
         getServer().getPluginManager().registerEvents(new GameListeners(this), this);
-        PropHuntCommand cmd = new PropHuntCommand(this);
-        getCommand("prophunt").setExecutor(cmd);
-        getCommand("prophunt").setTabCompleter(cmd);
+        registerCommands();
         getLogger().info("PropHunt enabled.");
+    }
+
+    private void registerCommands() {
+        PaperCommandManager<CommandSourceStack> commandManager = PaperCommandManager.builder()
+            .executionCoordinator(ExecutionCoordinator.simpleCoordinator())
+            .buildOnEnable(this);
+        MinecraftHelp<CommandSourceStack> minecraftHelp = MinecraftHelp.<CommandSourceStack>builder()
+            .commandManager(commandManager)
+            .audienceProvider(stack -> stack.getSender())
+            .commandPrefix("/prophunt help")
+            .build();
+        AnnotationParser<CommandSourceStack> parser = new AnnotationParser<>(commandManager, CommandSourceStack.class);
+        parser.parse(new PropHuntCommand(this, minecraftHelp));
     }
 
     @Override
@@ -217,11 +237,4 @@ public class PropHunt extends JavaPlugin {
         return builder.toString();
     }
 
-    public static PropHunt getInstance() {
-        return instance;
-    }
-
-    public GameManager getGameManager() {
-        return gameManager;
-    }
 }

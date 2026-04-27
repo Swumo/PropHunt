@@ -1,0 +1,10 @@
+name: PropHunt
+version: '1.0'
+main: me.swumo.prophunt.PropHunt
+loader: me.swumo.prophunt.PropHuntPluginLoader
+api-version: '1.21'
+folia-supported: true
+permissions:
+    prophunt.admin:
+        description: Admin control of PropHunt games
+        default: op
