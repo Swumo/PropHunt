@@ -1,0 +1,227 @@
+# PropHunt Configuration
+# Supports gradients with <gradient:#RRGGBB:#RRGGBB>text</gradient>
+# Supports single hex colors with &#RRGGBB
+
+gameplay:
+  # Ticks a hider must stand still before their block solidifies (20 ticks = 1 second)
+  lock-ticks: 60
+
+  # Number of hits a hider can take before being found
+  hider-hp: 3
+
+  # Seconds seekers are held back at the start of the game
+  seeker-grace-seconds: 30
+
+  # Total game duration in seconds after seekers are released
+  game-duration-seconds: 300
+
+  # Maximum number of blocks sampled from the selected arena cuboid when building
+  # the random hider block pool. Higher values are more accurate but heavier.
+  arena-scan-max-blocks: 120000
+
+  # Team sizing: one seeker per this many players, rounded up, minimum 1 seeker.
+  players-per-seeker: 3
+
+  # Cooldown applied to seeker hits to avoid duplicate hit events.
+  seeker-hit-cooldown-ticks: 4
+
+  # Extra blindness seconds added to seekers while frozen so the effect does not expire early.
+  freeze-blindness-buffer-seconds: 5
+
+  # Show the release countdown title for the last N seconds.
+  countdown-title-threshold-seconds: 5
+
+  # Broadcast a time-remaining message when the round reaches these second values.
+  round-warning-seconds:
+    - 300
+    - 60
+
+  # Used when arena sampling finds no valid blocks.
+  default-hider-blocks:
+    - GRASS_BLOCK
+    - DIRT
+    - STONE
+    - COBBLESTONE
+    - OAK_LOG
+    - BIRCH_LOG
+    - SAND
+    - GRAVEL
+    - OAK_PLANKS
+    - SPRUCE_PLANKS
+    - BRICKS
+    - MOSSY_COBBLESTONE
+    - BOOKSHELF
+    - CRAFTING_TABLE
+    - CHEST
+    - BARREL
+    - HAY_BLOCK
+    - MELON
+    - PUMPKIN
+    - TNT
+    - CACTUS
+    - CLAY
+    - SMOOTH_STONE
+    - ANDESITE
+    - DIORITE
+    - GRANITE
+    - OAK_LEAVES
+    - SNOW_BLOCK
+    - ICE
+    - FURNACE
+
+display:
+  title:
+    fade-in-ticks: 10
+    stay-ticks: 50
+    fade-out-ticks: 10
+
+titles:
+  round-start:
+    title: "<gradient:#FFD166:#F97316>PropHunt Started</gradient>"
+    subtitle: "&#FDE68AArena: {arena} &7| &#FB7185Seekers release in {seconds}s"
+  seeker-role:
+    title: "<gradient:#FB7185:#EF4444>You are the SEEKER</gradient>"
+    subtitle: "&#FDE68AFrozen and blinded until release"
+  hider-role:
+    title: "<gradient:#34D399:#10B981>You are a HIDER</gradient>"
+    subtitle: "&#FDE68AStand still to solidify before release"
+  seekers-waiting:
+    title: "<gradient:#F97316:#EF4444>Waiting for hiders to hide...</gradient>"
+    subtitle: "&#FDE68AReleasing in {seconds}s"
+  release-countdown:
+    title: "<gradient:#FB7185:#F43F5E>Release in {seconds}</gradient>"
+    subtitle: "&#D1D5DBGet ready"
+  seekers-released:
+    title: "<gradient:#F97316:#EF4444>Seekers Released</gradient>"
+    subtitle: "&#FDE68AFind the props"
+  seekers-go:
+    title: "<gradient:#F59E0B:#EF4444>GO</gradient>"
+    subtitle: "&#FDE68AFind the hiders"
+  solidified:
+    title: "<gradient:#67E8F9:#38BDF8>SOLIDIFIED</gradient>"
+    subtitle: "&#FDE68AYou are locked in place"
+  unlocked:
+    title: "<gradient:#FDE68A:#F59E0B>UNLOCKED</gradient>"
+    subtitle: "<gradient:#86EFAC:#22C55E>Keep moving</gradient>"
+  found:
+    title: "<gradient:#FB7185:#B91C1C>You Were Found</gradient>"
+    subtitle: "&#D1D5DBSpectating now"
+  hiders-win:
+    title: "<gradient:#6EE7B7:#16A34A>HIDERS WIN</gradient>"
+    subtitle: "&#FDE68ARound over"
+  seekers-win:
+    title: "<gradient:#FB7185:#DC2626>SEEKERS WIN</gradient>"
+    subtitle: "&#FDE68ARound over"
+
+messages:
+  prefix: "<gradient:#FDE68A:#F97316>&lPropHunt</gradient> &8>> &r"
+
+  errors:
+    no-permission: "&cNo permission."
+    players-only: "&cPlayers only."
+
+  command:
+    use-prefix: true
+    stopped: "&ePropHunt stopped."
+    reload-complete: "&aPropHunt config reloaded."
+    no-active-game: "&cNo active game."
+    not-a-hider: "&cYou are not a hider."
+    changing-disguise: "&eChanging disguise block..."
+    status-state: "&6State: {state}"
+    status-hiders: "&aHiders: {count}"
+    status-seekers: "&cSeekers: {count}"
+    status-queue: "&eQueue: {count} ({open})"
+    arena-usage: "&eUsage: /prophunt arena <create|remove|pos1|pos2|addhiderspawn|addseekerspawn|list|info> ..."
+    arena-create-usage: "&cUsage: /prophunt arena create <name>"
+    arena-remove-usage: "&cUsage: /prophunt arena remove <name>"
+    arena-info-usage: "&cUsage: /prophunt arena info <name>"
+    arena-pos1-usage: "&cUsage: /prophunt arena pos1 <name>"
+    arena-pos2-usage: "&cUsage: /prophunt arena pos2 <name>"
+    arena-addhiderspawn-usage: "&cUsage: /prophunt arena addhiderspawn <name>"
+    arena-addseekerspawn-usage: "&cUsage: /prophunt arena addseekerspawn <name>"
+    no-arenas-configured: "&cNo arenas configured."
+    arenas-list: "&6Arenas: {arenas}"
+    unknown-arena-subcommand: "&cUnknown arena subcommand."
+    help-player:
+      - "<gradient:#FDE68A:#F97316>=== PropHunt Commands ===</gradient>"
+      - "&#86EFAC/prophunt join &f- Join the next game queue"
+      - "&#86EFAC/prophunt leave &f- Leave the next game queue"
+      - "&#86EFAC/prophunt pick &f- Change your auto-assigned disguise block"
+
+    help-admin:
+      - "<gradient:#FDE68A:#F97316>=== PropHunt Commands ===</gradient>"
+      - "&#FDE68A/prophunt queue &f- Open the join queue"
+      - "&#FDE68A/prophunt start &f- Start the game"
+      - "&#FDE68A/prophunt stop &f- Stop the game"
+      - "&#FDE68A/prophunt reload &f- Reload config and live settings"
+      - "&#86EFAC/prophunt join &f- Join the next game queue"
+      - "&#86EFAC/prophunt leave &f- Leave the next game queue"
+      - "&#86EFAC/prophunt pick &f- Change your auto-assigned disguise block"
+      - "&#93C5FD/prophunt status &f- Show game status"
+      - "&#C4B5FD/prophunt arena create <name> &f- Create arena"
+      - "&#C4B5FD/prophunt arena remove <name> &f- Remove arena"
+      - "&#C4B5FD/prophunt arena pos1/pos2 <name> &f- Set arena cuboid"
+      - "&#C4B5FD/prophunt arena addhiderspawn <name> &f- Add hider spawn"
+      - "&#C4B5FD/prophunt arena addseekerspawn <name> &f- Add seeker spawn"
+      - "&#C4B5FD/prophunt arena list|info <name> &f- Inspect arenas"
+
+  game:
+    already-running: "&cA game is already running!"
+    need-two-players: "&cNeed at least 2 players!"
+    no-arenas: "&cNo arenas configured. Use /prophunt arena create <name>."
+    no-cuboids: "&cNo cuboid(s) are set. Use /prophunt arena pos1 <name> and pos2."
+    missing-spawns: "&cMissing spawn(s). Add both hider and seeker spawns to at least one arena."
+    no-playable-arenas: "&cNo playable arena found (needs cuboid + hider spawns + seeker spawns)."
+    round-start: "<gradient:#FDE68A:#F97316>=== PropHunt Started on Arena: {arena} ===</gradient>"
+    round-start-block-pool: "&#86EFACHiders are assigned random map blocks from this arena."
+    seeker-release-delay: "&#FB7185Seekers: releasing in {seconds} seconds!"
+    seekers-released: "<gradient:#F97316:#EF4444>Seekers RELEASED! Find the props!</gradient>"
+    time-remaining: "&#FDE68A{time} remaining!"
+    hider-hit: "&cYou were hit! HP: {hp}"
+    seeker-hit-confirm: "&eHIT!"
+    must-hit-disguise-block: "&cYou must hit the disguise block, not the player."
+    found-broadcast: "&c{hider} was found by {seeker}!"
+    hiders-win: "<gradient:#6EE7B7:#16A34A>=== HIDERS WIN! ===</gradient>"
+    seekers-win: "<gradient:#FB7185:#DC2626>=== SEEKERS WIN! ===</gradient>"
+    random-disguise: "&aRandom disguise: {block}"
+    unlock-first: "&cUnlock first by moving!"
+    disguised-as: "&aDisguised as {block}!"
+
+  arena:
+    already-exists: "&cArena already exists: {arena}"
+    created: "&aCreated arena: {arena}"
+    removed: "&aRemoved arena: {arena}"
+    not-found: "&cArena not found: {arena}"
+    spawn-needs-cuboid: "&cSet pos1 and pos2 for this arena before adding spawns."
+    spawn-outside-cuboid: "&cSpawn must be inside the arena cuboid."
+    info: "&6Arena {arena}&7 | cuboid={cuboid} | hiderSpawns={hiders} | seekerSpawns={seekers}"
+    set-pos: "&aSet {pos} for arena {arena}."
+    add-spawn: "&aAdded {type} spawn to arena {arena}."
+
+  queue:
+    opened: "&aQueue opened. Players can now use /prophunt join."
+    closed-manual: "&eQueue closed."
+    player-joined: "&e{player} has joined the queue."
+    unavailable: "&cCould not open the queue right now."
+    closed: "&cQueue is closed while a game is running."
+    not-open: "&cQueue is not open. Wait for an admin to use /prophunt queue."
+    joined: "&aYou joined the PropHunt queue."
+    already-joined: "&eYou are already in the queue."
+    left: "&eYou left the PropHunt queue."
+    not-in-queue: "&cYou are not in the queue."
+
+# Legacy top-level gameplay keys are still read as fallbacks for older configs.
+# Arena data is written by commands under this section.
+# Example setup flow:
+# /prophunt arena create arena1
+# /prophunt arena pos1 arena1
+# /prophunt arena pos2 arena1
+# /prophunt arena addhiderspawn arena1
+# /prophunt arena addseekerspawn arena1
+# arenas:
+#   arena1:
+#     world: world
+#     pos1: {x: 0, y: 64, z: 0, yaw: 0, pitch: 0}
+#     pos2: {x: 50, y: 90, z: 50, yaw: 0, pitch: 0}
+#     hider-spawns: []
+#     seeker-spawns: []
