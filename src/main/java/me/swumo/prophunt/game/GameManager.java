@@ -1,18 +1,21 @@
-package me.Swumo.PropHunt.Game;
+package me.swumo.prophunt.game;
 
-import java.util.*;
-import java.util.concurrent.ThreadLocalRandom;
+import lombok.Getter;
+import me.swumo.prophunt.PropHunt;
+import me.swumo.prophunt.platform.PlatformScheduler;
+import me.swumo.prophunt.platform.PlatformScheduler.PlatformTask;
 import org.bukkit.*;
 import org.bukkit.block.Block;
+import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
-import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Interaction;
 import org.bukkit.entity.Player;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitTask;
-import me.Swumo.PropHunt.PropHunt;
+
+import java.util.*;
+import java.util.concurrent.ThreadLocalRandom;
 
 public class GameManager {
 
@@ -21,7 +24,7 @@ public class GameManager {
     }
 
     private final PropHunt plugin;
-    private State state = State.WAITING;
+    @Getter private State state = State.WAITING;
     private final Map<UUID, HiderData> hiders = new HashMap<>();
     private final Set<UUID> seekers = new HashSet<>();
     private final Map<UUID, Location> lastLocations = new HashMap<>();
@@ -31,9 +34,9 @@ public class GameManager {
     private final List<Material> currentArenaBlockPool = new ArrayList<>();
     private boolean queueOpen;
     private Arena selectedArena;
-    private BukkitTask tickTask;
-    private BukkitTask countdownTask;
-    private BukkitTask gameTimerTask;
+    private PlatformTask tickTask;
+    private PlatformTask countdownTask;
+    private PlatformTask gameTimerTask;
     private int seekerGraceCountdown;
     private int gameSecondsRemaining;
 
@@ -51,7 +54,7 @@ public class GameManager {
     private int titleFadeOutTicks;
     private List<Integer> roundWarningSeconds = new ArrayList<>();
     private final List<Material> defaultHiderBlocks = new ArrayList<>();
-    private static final List<Material> FALLBACK_HIDER_BLOCKS = Arrays.asList(
+    private static final EnumSet<Material> FALLBACK_HIDER_BLOCKS = EnumSet.of(
             Material.GRASS_BLOCK, Material.DIRT, Material.STONE, Material.COBBLESTONE,
             Material.OAK_LOG, Material.BIRCH_LOG, Material.SAND, Material.GRAVEL,
             Material.OAK_PLANKS, Material.SPRUCE_PLANKS, Material.BRICKS,
@@ -59,7 +62,8 @@ public class GameManager {
             Material.CHEST, Material.BARREL, Material.HAY_BLOCK, Material.MELON,
             Material.PUMPKIN, Material.TNT, Material.CACTUS, Material.CLAY,
             Material.SMOOTH_STONE, Material.ANDESITE, Material.DIORITE, Material.GRANITE,
-            Material.OAK_LEAVES, Material.SNOW_BLOCK, Material.ICE, Material.FURNACE);
+            Material.OAK_LEAVES, Material.SNOW_BLOCK, Material.ICE, Material.FURNACE
+    );
 
     public GameManager(PropHunt plugin) {
         this.plugin = plugin;
@@ -82,8 +86,8 @@ public class GameManager {
             } else {
                 currentArenaBlockPool.addAll(sampleArenaBlocks(selectedArena));
             }
-            if (currentArenaBlockPool.isEmpty())
-                currentArenaBlockPool.addAll(defaultHiderBlocks);
+
+            if (currentArenaBlockPool.isEmpty()) currentArenaBlockPool.addAll(defaultHiderBlocks);
         } else if (state == State.WAITING) {
             currentArenaBlockPool.clear();
             currentArenaBlockPool.addAll(defaultHiderBlocks);
@@ -101,7 +105,7 @@ public class GameManager {
         boolean blockPoolGenerated = false;
 
         Arena(String name, String world, Location pos1, Location pos2, List<Location> hiderSpawns,
-                List<Location> seekerSpawns) {
+              List<Location> seekerSpawns) {
             this.name = name;
             this.world = world;
             this.pos1 = pos1;
@@ -124,10 +128,12 @@ public class GameManager {
             startError(sender, msg("messages.game.already-running", "&cA game is already running!"));
             return;
         }
+
         if (!queueOpen) {
             startError(sender, msg("messages.queue.not-open", "&cQueue is not open. Use /prophunt queue first."));
             return;
         }
+
         cleanupQueue();
         List<Player> queuedOnlinePlayers = getQueuedOnlinePlayers();
 
@@ -155,8 +161,10 @@ public class GameManager {
 
         List<Arena> playableArenas = new ArrayList<>();
         for (Arena arena : arenas) {
-            if (arena.hasCuboid() && arena.hasSpawns())
-                playableArenas.add(arena);
+            if (!arena.hasCuboid()) continue;
+            if (!arena.hasSpawns()) continue;
+
+            playableArenas.add(arena);
         }
         if (playableArenas.isEmpty()) {
             startError(sender, msg("messages.game.no-playable-arenas",
@@ -167,19 +175,21 @@ public class GameManager {
         selectedArena = playableArenas.get(ThreadLocalRandom.current().nextInt(playableArenas.size()));
         queueOpen = false;
         currentArenaBlockPool.clear();
+
         if (!selectedArena.cachedBlockPool.isEmpty()) {
             currentArenaBlockPool.addAll(selectedArena.cachedBlockPool);
         } else {
             currentArenaBlockPool.addAll(sampleArenaBlocks(selectedArena));
         }
-        if (currentArenaBlockPool.isEmpty())
-            currentArenaBlockPool.addAll(defaultHiderBlocks);
+
+        if (currentArenaBlockPool.isEmpty()) currentArenaBlockPool.addAll(defaultHiderBlocks);
 
         hiders.clear();
         seekers.clear();
         lastLocations.clear();
         assignTeams(queuedOnlinePlayers);
         state = State.HIDING_PHASE;
+
         broadcast(msg("messages.game.round-start", "&6=== PropHunt Started on Arena: {arena} ===",
                 Map.of("arena", selectedArena.name)));
         broadcast(msg("messages.game.round-start-block-pool",
@@ -190,39 +200,44 @@ public class GameManager {
                 msg("titles.round-start.title", "&6PropHunt Started"),
                 msg("titles.round-start.subtitle", "&eArena: {arena} &7| Seekers release in {seconds}s",
                         Map.of("arena", selectedArena.name, "seconds", seekerGracePeriod)));
+
         for (UUID sid : seekers) {
             Player p = Bukkit.getPlayer(sid);
-            if (p != null) {
-                teleportToRandomSpawn(p, selectedArena.seekerSpawns);
-                p.setGameMode(GameMode.ADVENTURE);
-                freezeSeeker(p);
-                sendTitle(
-                        p,
-                        msg("titles.seeker-role.title", "&cYou are the SEEKER"),
-                        msg("titles.seeker-role.subtitle", "&eFrozen and blinded until release"));
-            }
+            if (p == null) continue;
+
+            teleportToRandomSpawn(p, selectedArena.seekerSpawns);
+            p.setGameMode(GameMode.ADVENTURE);
+            freezeSeeker(p);
+            sendTitle(
+                    p,
+                    msg("titles.seeker-role.title", "&cYou are the SEEKER"),
+                    msg("titles.seeker-role.subtitle", "&eFrozen and blinded until release"));
         }
+
         for (UUID hid : hiders.keySet()) {
             Player p = Bukkit.getPlayer(hid);
-            if (p != null) {
-                teleportToRandomSpawn(p, selectedArena.hiderSpawns);
-                p.setGameMode(GameMode.ADVENTURE);
-                p.setInvisible(true);
-                assignRandomBlock(p);
-                sendTitle(
-                        p,
-                        msg("titles.hider-role.title", "&aYou are a HIDER"),
-                        msg("titles.hider-role.subtitle", "&eStand still to solidify before release"));
-            }
+            if (p == null) continue;
+
+            teleportToRandomSpawn(p, selectedArena.hiderSpawns);
+            p.setGameMode(GameMode.ADVENTURE);
+            p.setInvisible(true);
+            assignRandomBlock(p);
+            sendTitle(
+                    p,
+                    msg("titles.hider-role.title", "&aYou are a HIDER"),
+                    msg("titles.hider-role.subtitle", "&eStand still to solidify before release"));
+
         }
 
         applyArenaWorldBorders();
 
+        PlatformScheduler scheduler = plugin.getPlatformScheduler();
+
         // Run hider locking tick immediately, so solidifying works during hiding phase.
-        tickTask = Bukkit.getScheduler().runTaskTimer(plugin, this::gameTick, 1L, 1L);
+        tickTask = scheduler.runGlobalRepeating(this::gameTick, 1L, 1L);
 
         seekerGraceCountdown = seekerGracePeriod;
-        countdownTask = Bukkit.getScheduler().runTaskTimer(plugin, () -> {
+        countdownTask = scheduler.runGlobalRepeating(() -> {
             seekerGraceCountdown--;
             if (seekerGraceCountdown <= 0) {
                 countdownTask.cancel();
@@ -238,7 +253,7 @@ public class GameManager {
                                         Map.of("seconds", seekerGraceCountdown)));
                     }
                 }
-            } else if (seekerGraceCountdown <= countdownTitleThresholdSeconds) {
+            } else {
                 for (UUID sid : seekers) {
                     Player p = Bukkit.getPlayer(sid);
                     if (p != null) {
@@ -254,10 +269,11 @@ public class GameManager {
     }
 
     private void startError(CommandSender sender, String message) {
-        if (sender != null)
+        if (sender != null) {
             sender.sendMessage(plugin.applyCommandPrefix(message));
-        else
+        } else {
             broadcast(message);
+        }
     }
 
     private void releaseSeekersPhase() {
@@ -275,7 +291,7 @@ public class GameManager {
             }
         }
         gameSecondsRemaining = gameDuration;
-        gameTimerTask = Bukkit.getScheduler().runTaskTimer(plugin, () -> {
+        gameTimerTask = plugin.getPlatformScheduler().runGlobalRepeating(() -> {
             gameSecondsRemaining -= 1;
             if (gameSecondsRemaining <= 0) {
                 gameTimerTask.cancel();
@@ -290,28 +306,26 @@ public class GameManager {
     }
 
     private void gameTick() {
-        if (state != State.HIDING_PHASE && state != State.SEEKING_PHASE)
-            return;
+        if (state != State.HIDING_PHASE && state != State.SEEKING_PHASE) return;
 
         if (state == State.HIDING_PHASE) {
             for (Map.Entry<UUID, Location> entry : new HashMap<>(frozenSeekers).entrySet()) {
                 Player seeker = Bukkit.getPlayer(entry.getKey());
-                if (seeker == null || !seeker.isOnline())
-                    continue;
+                if (seeker == null || !seeker.isOnline()) continue;
+
                 Location freezeLoc = entry.getValue();
-                if (shouldReapplyFrozenView(freezeLoc, seeker.getLocation())) {
-                    seeker.teleport(freezeLoc.clone());
-                }
+                if (!shouldReapplyFrozenView(freezeLoc, seeker.getLocation())) continue;
+
+                seeker.teleport(freezeLoc.clone());
             }
         }
 
         for (Map.Entry<UUID, HiderData> entry : new ArrayList<>(hiders.entrySet())) {
             Player p = Bukkit.getPlayer(entry.getKey());
             HiderData data = entry.getValue();
-            if (p == null || !p.isOnline())
-                continue;
-            if (data.getChosenBlock() == null)
-                continue;
+            if (p == null || !p.isOnline()) continue;
+            if (data.getChosenBlock() == null) continue;
+
             if (data.isLocked()) {
                 p.setInvisible(true);
                 if (data.getPlacedBlockLocation() != null) {
@@ -324,6 +338,7 @@ public class GameManager {
                 }
                 continue;
             }
+
             p.setInvisible(true);
             data.updateMobileDisguisePosition(p);
             if (isPlayerStill(p)) {
@@ -331,8 +346,8 @@ public class GameManager {
             } else {
                 data.resetStillTicks();
             }
-            if (data.getStillTicks() >= lockTicksRequired)
-                lockHider(p, data);
+
+            if (data.getStillTicks() >= lockTicksRequired) lockHider(p, data);
         }
         if (state == State.SEEKING_PHASE && hiders.isEmpty())
             endGame(false);
@@ -341,8 +356,8 @@ public class GameManager {
     private boolean isPlayerStill(Player p) {
         Location cur = p.getLocation();
         Location last = lastLocations.put(p.getUniqueId(), cur.clone());
-        if (last == null)
-            return false;
+        if (last == null) return false;
+
         double dx = cur.getX() - last.getX(), dy = cur.getY() - last.getY(), dz = cur.getZ() - last.getZ();
         return (dx * dx + dy * dy + dz * dz) < 0.001;
     }
@@ -355,21 +370,24 @@ public class GameManager {
         Location anchor = getFloorAnchorLocation(p);
         data.placeWorldBlock(anchor);
 
-        // While locked, remove the personal world border so border push cannot pop the
-        // hider out.
+        // While locked, remove the personal world border so border push cannot pop the hider out.
         p.setWorldBorder(null);
 
-        // Spectator mode prevents the new solid block from pushing/revealing the hidden
-        // player.
+        // Spectator mode prevents the new solid block from pushing/revealing the hidden player.
         p.setGameMode(GameMode.SPECTATOR);
         Location lockTp = anchor.clone().add(0.5, 0.0, 0.5);
         lockTp.setYaw(p.getLocation().getYaw());
         lockTp.setPitch(p.getLocation().getPitch());
         p.teleport(lockTp);
         p.setFlying(true);
+
         sendTitle(p, msg("titles.solidified.title", "&bSOLIDIFIED"),
                 msg("titles.solidified.subtitle", "&eYou are locked in place"));
-        p.playSound(p.getLocation(), Sound.BLOCK_STONE_PLACE, 1f, 1f);
+        Material chosen = data.getChosenBlock();
+        Sound placeSound = chosen != null
+                ? chosen.createBlockData().getSoundGroup().getPlaceSound()
+                : Sound.BLOCK_STONE_PLACE;
+        p.playSound(p.getLocation(), placeSound, 1f, 1f);
     }
 
     private Location getFloorAnchorLocation(Player p) {
@@ -393,26 +411,23 @@ public class GameManager {
 
     public void unlockHider(Player p) {
         HiderData data = hiders.get(p.getUniqueId());
-        if (data == null || !data.isLocked())
-            return;
+        if (data == null || !data.isLocked()) return;
+
         data.setLocked(false);
-        Location revealLoc = data.getPlacedBlockLocation() == null ? p.getLocation()
-                : data.getPlacedBlockLocation().clone().add(0.5, 0.0, 0.5);
+        Location revealLoc = data.getPlacedBlockLocation() == null ? p.getLocation() : data.getPlacedBlockLocation().clone().add(0.5, 0.0, 0.5);
         data.restoreWorldBlock();
 
         p.setGameMode(GameMode.ADVENTURE);
         p.teleport(revealLoc);
         p.setInvisible(true);
-        if (state == State.HIDING_PHASE || state == State.SEEKING_PHASE) {
-            applyArenaWorldBorder(p);
-        }
+        if (state == State.HIDING_PHASE || state == State.SEEKING_PHASE) applyArenaWorldBorder(p);
+
         data.spawnDisplay(p);
         sendTitle(p, msg("titles.unlocked.title", "&eUNLOCKED"), msg("titles.unlocked.subtitle", "&aKeep moving"));
     }
 
     public void handleHiderHit(Player seeker, org.bukkit.entity.BlockDisplay display) {
-        if (state != State.SEEKING_PHASE)
-            return;
+        if (state != State.SEEKING_PHASE) return;
         UUID targetUUID = null;
         for (Map.Entry<UUID, HiderData> entry : hiders.entrySet()) {
             if (display.equals(entry.getValue().getBlockDisplay())) {
@@ -420,14 +435,13 @@ public class GameManager {
                 break;
             }
         }
-        if (targetUUID == null)
-            return;
+
+        if (targetUUID == null) return;
         applyHiderHit(seeker, targetUUID);
     }
 
     public void handleHiderHit(Player seeker, Interaction hitbox) {
-        if (state != State.SEEKING_PHASE)
-            return;
+        if (state != State.SEEKING_PHASE) return;
         UUID targetUUID = null;
         for (Map.Entry<UUID, HiderData> entry : hiders.entrySet()) {
             if (hitbox.equals(entry.getValue().getPropHitbox())) {
@@ -435,14 +449,14 @@ public class GameManager {
                 break;
             }
         }
-        if (targetUUID == null)
-            return;
+
+        if (targetUUID == null) return;
         applyHiderHit(seeker, targetUUID);
     }
 
     public boolean handleHiderBlockHit(Player seeker, Location blockLocation) {
-        if (state != State.SEEKING_PHASE)
-            return false;
+        if (state != State.SEEKING_PHASE) return false;
+
         for (Map.Entry<UUID, HiderData> entry : hiders.entrySet()) {
             Location placed = entry.getValue().getPlacedBlockLocation();
             if (sameBlock(placed, blockLocation)) {
@@ -450,6 +464,7 @@ public class GameManager {
                 return true;
             }
         }
+
         return false;
     }
 
@@ -459,8 +474,7 @@ public class GameManager {
             return;
 
         // Prevent accidental multi-hit in a single tick from multiple events.
-        if (seeker.hasCooldown(Material.WOODEN_SWORD))
-            return;
+        if (seeker.hasCooldown(Material.WOODEN_SWORD)) return;
         seeker.setCooldown(Material.WOODEN_SWORD, seekerHitCooldownTicks);
 
         target.setHp(target.getHp() - 1);
@@ -479,8 +493,8 @@ public class GameManager {
 
     private void killHider(UUID uid, Player seeker) {
         HiderData data = hiders.remove(uid);
-        if (data != null)
-            data.clearDisguise();
+        if (data != null) data.clearDisguise();
+
         lastLocations.remove(uid);
         Player hider = Bukkit.getPlayer(uid);
         if (hider != null) {
@@ -500,15 +514,13 @@ public class GameManager {
     }
 
     private void endGame(boolean hidersWin) {
-        if (state == State.END || state == State.WAITING)
-            return;
+        if (state == State.END || state == State.WAITING) return;
         state = State.END;
-        if (tickTask != null)
-            tickTask.cancel();
-        if (countdownTask != null)
-            countdownTask.cancel();
-        if (gameTimerTask != null)
-            gameTimerTask.cancel();
+
+        if (tickTask != null) tickTask.cancel();
+        if (countdownTask != null) countdownTask.cancel();
+        if (gameTimerTask != null) gameTimerTask.cancel();
+
         unfreezeAllSeekers();
         broadcastTitle(
                 hidersWin ? msg("titles.hiders-win.title", "&aHIDERS WIN")
@@ -530,6 +542,12 @@ public class GameManager {
                 p.setGameMode(GameMode.ADVENTURE);
             }
         }
+
+        cleanup();
+        plugin.getPlatformScheduler().runGlobalLater(() -> state = State.WAITING, 100L);
+    }
+
+    private void cleanup() {
         clearArenaWorldBorders();
         hiders.clear();
         seekers.clear();
@@ -542,19 +560,16 @@ public class GameManager {
         selectedArena = null;
         currentArenaBlockPool.clear();
         currentArenaBlockPool.addAll(defaultHiderBlocks);
-        Bukkit.getScheduler().runTaskLater(plugin, () -> state = State.WAITING, 100L);
     }
 
     public void forceStop() {
-        if (tickTask != null)
-            tickTask.cancel();
-        if (countdownTask != null)
-            countdownTask.cancel();
-        if (gameTimerTask != null)
-            gameTimerTask.cancel();
+        if (tickTask != null) tickTask.cancel();
+        if (countdownTask != null) countdownTask.cancel();
+        if (gameTimerTask != null) gameTimerTask.cancel();
+
         unfreezeAllSeekers();
-        for (HiderData d : hiders.values())
-            d.clearDisguise();
+        for (HiderData d : hiders.values()) d.clearDisguise();
+
         for (UUID uid : hiders.keySet()) {
             Player p = Bukkit.getPlayer(uid);
             if (p != null) {
@@ -562,6 +577,7 @@ public class GameManager {
                 p.setGameMode(GameMode.SURVIVAL);
             }
         }
+
         for (UUID uid : seekers) {
             Player p = Bukkit.getPlayer(uid);
             if (p != null) {
@@ -569,49 +585,38 @@ public class GameManager {
                 p.setGameMode(GameMode.SURVIVAL);
             }
         }
-        clearArenaWorldBorders();
-        hiders.clear();
-        seekers.clear();
-        lastLocations.clear();
-        frozenSeekers.clear();
-        seekerGraceCountdown = 0;
-        gameSecondsRemaining = 0;
-        queueOpen = false;
-        queuedPlayers.clear();
-        selectedArena = null;
-        currentArenaBlockPool.clear();
-        currentArenaBlockPool.addAll(defaultHiderBlocks);
+
+        cleanup();
         state = State.WAITING;
     }
 
     public void handlePlayerQuit(Player p) {
         HiderData data = hiders.get(p.getUniqueId());
-        if (data != null)
-            data.clearDisguise();
+        if (data != null) data.clearDisguise();
+
         queuedPlayers.remove(p.getUniqueId());
         frozenSeekers.remove(p.getUniqueId());
         p.setWorldBorder(null);
     }
 
     public boolean joinQueue(Player player) {
-        if (player == null)
-            return false;
-        if (!isQueueOpen())
-            return false;
+        if (player == null) return false;
+        if (!isQueueOpen()) return false;
+
         return queuedPlayers.add(player.getUniqueId());
     }
 
     public boolean openQueue() {
-        if (state != State.WAITING || queueOpen)
-            return false;
+        if (state != State.WAITING || queueOpen) return false;
+
         queuedPlayers.clear();
         queueOpen = true;
         return true;
     }
 
     public boolean closeQueue() {
-        if (state != State.WAITING || !queueOpen)
-            return false;
+        if (state != State.WAITING || !queueOpen) return false;
+
         queuedPlayers.clear();
         queueOpen = false;
         return true;
@@ -622,8 +627,8 @@ public class GameManager {
     }
 
     public boolean leaveQueue(Player player) {
-        if (player == null)
-            return false;
+        if (player == null) return false;
+
         return queuedPlayers.remove(player.getUniqueId());
     }
 
@@ -633,15 +638,11 @@ public class GameManager {
     }
 
     public List<Material> getAvailableDisguiseBlocks() {
-        List<Material> source = currentArenaBlockPool.isEmpty() ? defaultHiderBlocks : currentArenaBlockPool;
-        if (source.isEmpty())
-            source = FALLBACK_HIDER_BLOCKS;
+        Collection<Material> source = currentArenaBlockPool.isEmpty() ? defaultHiderBlocks : currentArenaBlockPool;
+        if (source.isEmpty()) source = FALLBACK_HIDER_BLOCKS;
+
         return new ArrayList<>(new LinkedHashSet<>(source));
     }
-
-    // -------------------------------------------------------------------------
-    // Arena setup / configuration
-    // -------------------------------------------------------------------------
 
     public String createArena(String name) {
         String key = normalizeArenaName(name);
@@ -683,16 +684,15 @@ public class GameManager {
 
     public List<String> getArenaNames() {
         ConfigurationSection arenasSec = plugin.getConfig().getConfigurationSection("arenas");
-        if (arenasSec == null)
-            return Collections.emptyList();
+        if (arenasSec == null) return Collections.emptyList();
+
         return new ArrayList<>(arenasSec.getKeys(false));
     }
 
     public String arenaInfo(String name) {
         String key = normalizeArenaName(name);
         ConfigurationSection sec = plugin.getConfig().getConfigurationSection("arenas." + key);
-        if (sec == null)
-            return msg("messages.arena.not-found", "&cArena not found: {arena}", Map.of("arena", key));
+        if (sec == null) return msg("messages.arena.not-found", "&cArena not found: {arena}", Map.of("arena", key));
 
         boolean hasPos1 = sec.isConfigurationSection("pos1");
         boolean hasPos2 = sec.isConfigurationSection("pos2");
@@ -709,8 +709,7 @@ public class GameManager {
         String key = normalizeArenaName(name);
         FileConfiguration cfg = plugin.getConfig();
         ConfigurationSection sec = cfg.getConfigurationSection("arenas." + key);
-        if (sec == null)
-            return msg("messages.arena.not-found", "&cArena not found: {arena}", Map.of("arena", key));
+        if (sec == null) return msg("messages.arena.not-found", "&cArena not found: {arena}", Map.of("arena", key));
 
         Location loc = player.getLocation();
         sec.set("world", loc.getWorld().getName());
@@ -733,8 +732,7 @@ public class GameManager {
         String key = normalizeArenaName(name);
         FileConfiguration cfg = plugin.getConfig();
         ConfigurationSection sec = cfg.getConfigurationSection("arenas." + key);
-        if (sec == null)
-            return msg("messages.arena.not-found", "&cArena not found: {arena}", Map.of("arena", key));
+        if (sec == null) return msg("messages.arena.not-found", "&cArena not found: {arena}", Map.of("arena", key));
 
         Location loc = player.getLocation();
         sec.set("world", loc.getWorld().getName());
@@ -744,6 +742,7 @@ public class GameManager {
         if (pos1 == null || pos2 == null) {
             return msg("messages.arena.spawn-needs-cuboid", "&cSet pos1 and pos2 for this arena before adding spawns.");
         }
+
         if (!isInsideCuboid(loc, pos1, pos2)) {
             return msg("messages.arena.spawn-outside-cuboid", "&cSpawn must be inside the arena cuboid.");
         }
@@ -767,14 +766,13 @@ public class GameManager {
 
     private List<Arena> loadArenasFromConfig() {
         ConfigurationSection arenasSec = plugin.getConfig().getConfigurationSection("arenas");
-        if (arenasSec == null)
-            return Collections.emptyList();
+        if (arenasSec == null) return Collections.emptyList();
 
         List<Arena> arenas = new ArrayList<>();
         for (String name : arenasSec.getKeys(false)) {
             ConfigurationSection sec = arenasSec.getConfigurationSection(name);
-            if (sec == null)
-                continue;
+            if (sec == null) continue;
+
             String world = sec.getString("world");
             Location pos1 = readLocation(sec.getConfigurationSection("pos1"), world);
             Location pos2 = readLocation(sec.getConfigurationSection("pos2"), world);
@@ -782,6 +780,7 @@ public class GameManager {
             List<Location> seekerSpawns = readLocationList(sec.getMapList("seeker-spawns"), world);
             Arena arena = new Arena(name, world, pos1, pos2, hiderSpawns, seekerSpawns);
             arenas.add(arena);
+
             // Pre-generate block pool asynchronously when arena is loaded
             preGenerateArenaBlocks(arena);
         }
@@ -791,8 +790,7 @@ public class GameManager {
     private List<Location> readLocationList(List<Map<?, ?>> list, String worldName) {
         List<Location> out = new ArrayList<>();
         World world = worldName == null ? null : Bukkit.getWorld(worldName);
-        if (world == null)
-            return out;
+        if (world == null) return out;
         for (Map<?, ?> m : list) {
             try {
                 double x = numberFromMap(m, "x", 0d);
@@ -804,28 +802,30 @@ public class GameManager {
             } catch (Exception ignored) {
             }
         }
+
         return out;
     }
 
     private double numberFromMap(Map<?, ?> map, String key, double defaultValue) {
         Object value = map.get(key);
-        if (value instanceof Number n)
-            return n.doubleValue();
+        if (value instanceof Number n) return n.doubleValue();
+
         if (value instanceof String s) {
             try {
                 return Double.parseDouble(s);
             } catch (NumberFormatException ignored) {
             }
         }
+
         return defaultValue;
     }
 
     private Location readLocation(ConfigurationSection sec, String worldName) {
-        if (sec == null || worldName == null)
-            return null;
+        if (sec == null || worldName == null) return null;
+
         World world = Bukkit.getWorld(worldName);
-        if (world == null)
-            return null;
+        if (world == null) return null;
+
         return new Location(
                 world,
                 sec.getDouble("x"),
@@ -848,15 +848,14 @@ public class GameManager {
     }
 
     private void teleportToRandomSpawn(Player p, List<Location> spawns) {
-        if (spawns.isEmpty())
-            return;
+        if (spawns.isEmpty()) return;
+
         Location target = spawns.get(ThreadLocalRandom.current().nextInt(spawns.size()));
         p.teleport(target);
     }
 
     private List<Material> sampleArenaBlocks(Arena arena) {
-        if (arena == null || !arena.hasCuboid())
-            return Collections.emptyList();
+        if (arena == null || !arena.hasCuboid()) return Collections.emptyList();
 
         int minX = Math.min(arena.pos1.getBlockX(), arena.pos2.getBlockX());
         int maxX = Math.max(arena.pos1.getBlockX(), arena.pos2.getBlockX());
@@ -872,23 +871,22 @@ public class GameManager {
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
                 for (int z = minZ; z <= maxZ; z++) {
-                    if (scanned++ >= arenaScanMaxBlocks)
-                        break;
+                    if (scanned++ >= arenaScanMaxBlocks) break;
+
                     Block block = arena.pos1.getWorld().getBlockAt(x, y, z);
                     Material mat = block.getType();
-                    if (!isAllowedPropMaterial(mat))
-                        continue;
+                    if (!isAllowedPropMaterial(mat)) continue;
+
                     counts.put(mat, counts.getOrDefault(mat, 0) + 1);
                 }
                 if (scanned >= arenaScanMaxBlocks)
                     break;
             }
-            if (scanned >= arenaScanMaxBlocks)
-                break;
+
+            if (scanned >= arenaScanMaxBlocks) break;
         }
 
-        if (counts.isEmpty())
-            return Collections.emptyList();
+        if (counts.isEmpty()) return Collections.emptyList();
 
         List<Material> weighted = new ArrayList<>();
         for (Map.Entry<Material, Integer> entry : counts.entrySet()) {
@@ -896,28 +894,26 @@ public class GameManager {
             for (int i = 0; i < weight; i++)
                 weighted.add(entry.getKey());
         }
+
         return weighted;
     }
 
     private boolean isAllowedPropMaterial(Material mat) {
-        if (mat == null)
-            return false;
-        if (!mat.isBlock() || !mat.isSolid() || mat.isAir())
-            return false;
+        if (mat == null) return false;
+        if (!mat.isBlock() || !mat.isSolid() || mat.isAir()) return false;
+
         return switch (mat) {
             case BEDROCK, BARRIER, COMMAND_BLOCK, CHAIN_COMMAND_BLOCK, REPEATING_COMMAND_BLOCK,
-                    WATER, LAVA, LIGHT, STRUCTURE_VOID ->
-                false;
+                 WATER, LAVA, LIGHT, STRUCTURE_VOID -> false;
             default -> true;
         };
     }
 
     private void preGenerateArenaBlocks(Arena arena) {
-        if (arena == null || !arena.hasCuboid() || arena.blockPoolGenerated)
-            return;
+        if (arena == null || !arena.hasCuboid() || arena.blockPoolGenerated) return;
 
         // Run asynchronously to avoid blocking the main thread
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+        plugin.getPlatformScheduler().runAsync(() -> {
             List<Material> blocks = sampleArenaBlocks(arena);
             if (!blocks.isEmpty()) {
                 arena.cachedBlockPool.clear();
@@ -948,9 +944,9 @@ public class GameManager {
     private void unfreezeAllSeekers() {
         for (UUID uid : new HashSet<>(frozenSeekers.keySet())) {
             Player p = Bukkit.getPlayer(uid);
-            if (p != null)
-                unfreezeSeeker(p);
+            if (p != null) unfreezeSeeker(p);
         }
+
         frozenSeekers.clear();
     }
 
@@ -960,10 +956,11 @@ public class GameManager {
         int seekerCount = Math.max(1, (int) Math.ceil((double) players.size() / playersPerSeeker));
         for (int i = 0; i < players.size(); i++) {
             UUID uid = players.get(i).getUniqueId();
-            if (i < seekerCount)
+            if (i < seekerCount) {
                 seekers.add(uid);
-            else
+            } else {
                 hiders.put(uid, new HiderData(uid, hiderMaxHp));
+            }
         }
     }
 
@@ -975,6 +972,7 @@ public class GameManager {
             if (player != null && player.isOnline())
                 players.add(player);
         }
+
         return players;
     }
 
@@ -986,24 +984,24 @@ public class GameManager {
     }
 
     private void applyArenaWorldBorders() {
-        if (selectedArena == null || !selectedArena.hasCuboid() || selectedArena.pos1.getWorld() == null)
-            return;
+        if (selectedArena == null || !selectedArena.hasCuboid() || selectedArena.pos1.getWorld() == null) return;
+
         Set<UUID> participants = new HashSet<>();
         participants.addAll(hiders.keySet());
         participants.addAll(seekers);
 
         for (UUID participantId : participants) {
             Player player = Bukkit.getPlayer(participantId);
-            if (player == null || !player.isOnline())
-                continue;
+            if (player == null || !player.isOnline()) continue;
+
             applyArenaWorldBorder(player);
         }
     }
 
     private void applyArenaWorldBorder(Player player) {
-        if (player == null || selectedArena == null || !selectedArena.hasCuboid()
-                || selectedArena.pos1.getWorld() == null)
+        if (player == null || selectedArena == null || !selectedArena.hasCuboid() || selectedArena.pos1.getWorld() == null) {
             return;
+        }
 
         int minX = Math.min(selectedArena.pos1.getBlockX(), selectedArena.pos2.getBlockX());
         int maxX = Math.max(selectedArena.pos1.getBlockX(), selectedArena.pos2.getBlockX());
@@ -1018,6 +1016,7 @@ public class GameManager {
             minZ = Math.min(minZ, spawn.getBlockZ());
             maxZ = Math.max(maxZ, spawn.getBlockZ());
         }
+
         for (Location spawn : selectedArena.seekerSpawns) {
             if (spawn == null || spawn.getWorld() == null || !spawn.getWorld().equals(selectedArena.pos1.getWorld()))
                 continue;
@@ -1046,8 +1045,7 @@ public class GameManager {
 
         for (UUID participantId : participants) {
             Player player = Bukkit.getPlayer(participantId);
-            if (player != null && player.isOnline())
-                player.setWorldBorder(null);
+            if (player != null && player.isOnline()) player.setWorldBorder(null);
         }
     }
 
@@ -1061,8 +1059,7 @@ public class GameManager {
 
     public void setHiderBlock(Player p, Material block) {
         HiderData data = hiders.get(p.getUniqueId());
-        if (data == null)
-            return;
+        if (data == null) return;
         if (data.isLocked()) {
             p.sendMessage(msg("messages.game.unlock-first", "&cUnlock first by moving!"));
             return;
@@ -1074,31 +1071,25 @@ public class GameManager {
     }
 
     private boolean sameBlock(Location a, Location b) {
-        if (a == null || b == null)
-            return false;
-        if (a.getWorld() == null || b.getWorld() == null)
-            return false;
-        if (!a.getWorld().equals(b.getWorld()))
-            return false;
+        if (a == null || b == null) return false;
+        if (a.getWorld() == null || b.getWorld() == null) return false;
+        if (!a.getWorld().equals(b.getWorld())) return false;
+
         return a.getBlockX() == b.getBlockX()
                 && a.getBlockY() == b.getBlockY()
                 && a.getBlockZ() == b.getBlockZ();
     }
 
     private boolean shouldReapplyFrozenView(Location frozen, Location current) {
-        if (!sameBlock(frozen, current))
-            return true;
-        return Math.abs(frozen.getYaw() - current.getYaw()) > 0.5f
-                || Math.abs(frozen.getPitch() - current.getPitch()) > 0.5f;
+        if (!sameBlock(frozen, current)) return true;
+
+        return Math.abs(frozen.getYaw() - current.getYaw()) > 0.5f || Math.abs(frozen.getPitch() - current.getPitch()) > 0.5f;
     }
 
     private boolean isInsideCuboid(Location location, Location pos1, Location pos2) {
-        if (location == null || pos1 == null || pos2 == null)
-            return false;
-        if (location.getWorld() == null || pos1.getWorld() == null || pos2.getWorld() == null)
-            return false;
-        if (!location.getWorld().equals(pos1.getWorld()) || !location.getWorld().equals(pos2.getWorld()))
-            return false;
+        if (location == null || pos1 == null || pos2 == null) return false;
+        if (location.getWorld() == null || pos1.getWorld() == null || pos2.getWorld() == null) return false;
+        if (!location.getWorld().equals(pos1.getWorld()) || !location.getWorld().equals(pos2.getWorld())) return false;
 
         int minX = Math.min(pos1.getBlockX(), pos2.getBlockX());
         int maxX = Math.max(pos1.getBlockX(), pos2.getBlockX());
@@ -1118,10 +1109,6 @@ public class GameManager {
 
     public boolean isSeeker(Player p) {
         return seekers.contains(p.getUniqueId());
-    }
-
-    public State getState() {
-        return state;
     }
 
     public Map<UUID, HiderData> getHiders() {
@@ -1150,8 +1137,9 @@ public class GameManager {
         recipients.addAll(hiders.keySet());
         recipients.addAll(seekers);
         for (Player online : Bukkit.getOnlinePlayers()) {
-            if (online.hasPermission("prophunt.admin"))
-                recipients.add(online.getUniqueId());
+            if (!online.hasPermission("prophunt.admin")) continue;
+
+            recipients.add(online.getUniqueId());
         }
         return recipients;
     }
@@ -1163,22 +1151,24 @@ public class GameManager {
         participants.addAll(seekers);
         for (UUID participantId : participants) {
             Player participant = Bukkit.getPlayer(participantId);
-            if (participant != null && participant.isOnline())
-                participant.sendMessage(prefixed);
+            if (participant == null || !participant.isOnline()) continue;
+
+            participant.sendMessage(prefixed);
         }
     }
 
     private void broadcastTitle(String title, String subtitle) {
         for (UUID recipientId : getMatchAndAdminRecipients()) {
             Player recipient = Bukkit.getPlayer(recipientId);
-            if (recipient != null && recipient.isOnline())
-                sendTitle(recipient, title, subtitle);
+            if (recipient == null || recipient.isOnline()) continue;
+
+            sendTitle(recipient, title, subtitle);
         }
     }
 
     private void sendTitle(Player player, String title, String subtitle) {
-        if (player == null)
-            return;
+        if (player == null) return;
+
         player.sendTitle(title, subtitle, titleFadeInTicks, titleStayTicks, titleFadeOutTicks);
     }
 
@@ -1198,8 +1188,7 @@ public class GameManager {
         roundWarningSeconds = intListSetting("gameplay.round-warning-seconds", Arrays.asList(300, 60));
         defaultHiderBlocks.clear();
         defaultHiderBlocks.addAll(materialListSetting("gameplay.default-hider-blocks", FALLBACK_HIDER_BLOCKS));
-        if (defaultHiderBlocks.isEmpty())
-            defaultHiderBlocks.addAll(FALLBACK_HIDER_BLOCKS);
+        if (defaultHiderBlocks.isEmpty()) defaultHiderBlocks.addAll(FALLBACK_HIDER_BLOCKS);
     }
 
     private void adjustRunningMatch(int oldHiderMaxHp, int oldSeekerGracePeriod, int oldGameDuration) {
@@ -1231,13 +1220,16 @@ public class GameManager {
 
     private int intSetting(String primaryPath, String legacyPath, int defaultValue, int minValue) {
         FileConfiguration config = plugin.getConfig();
+
         int value;
-        if (config.contains(primaryPath))
+        if (config.contains(primaryPath)) {
             value = config.getInt(primaryPath, defaultValue);
-        else if (legacyPath != null && config.contains(legacyPath))
+        } else if (legacyPath != null && config.contains(legacyPath)) {
             value = config.getInt(legacyPath, defaultValue);
-        else
+        } else {
             value = defaultValue;
+        }
+
         return Math.max(minValue, value);
     }
 
@@ -1255,22 +1247,21 @@ public class GameManager {
                 }
             }
         }
-        if (values.isEmpty())
-            values.addAll(fallback);
+        if (values.isEmpty()) values.addAll(fallback);
+
         values.sort(Comparator.reverseOrder());
         return values;
     }
 
-    private List<Material> materialListSetting(String path, List<Material> fallback) {
+    private List<Material> materialListSetting(String path, Collection<Material> fallback) {
         List<String> values = plugin.getConfig().getStringList(path);
         List<Material> materials = new ArrayList<>();
         for (String value : values) {
             Material material = Material.matchMaterial(value);
-            if (material != null && isAllowedPropMaterial(material))
-                materials.add(material);
+            if (material != Material.AIR && isAllowedPropMaterial(material)) materials.add(material);
         }
-        if (materials.isEmpty())
-            materials.addAll(fallback);
+
+        if (materials.isEmpty()) materials.addAll(fallback);
         return materials;
     }
 
@@ -1279,6 +1270,7 @@ public class GameManager {
             int minutes = totalSeconds / 60;
             return minutes + " minute" + (minutes == 1 ? "" : "s");
         }
+
         return totalSeconds + " seconds";
     }
 

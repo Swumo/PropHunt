@@ -1,7 +1,10 @@
-package me.Swumo.PropHunt.Game;
+package me.swumo.prophunt.game;
 
-import org.bukkit.Material;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.Setter;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.BlockDisplay;
@@ -10,63 +13,27 @@ import org.bukkit.entity.Player;
 import org.bukkit.util.Transformation;
 import org.joml.AxisAngle4f;
 import org.joml.Vector3f;
+
 import java.util.UUID;
 
+@Getter
 public class HiderData {
     private final UUID uuid;
-    private Material chosenBlock;
-    private BlockDisplay blockDisplay;
+    @Setter private Material chosenBlock;
+    @Setter private BlockDisplay blockDisplay;
     private Interaction propHitbox;
     private Location placedBlockLocation;
+    @Getter(AccessLevel.NONE)
     private BlockData replacedBlockData;
+    @Getter(AccessLevel.NONE)
     private boolean worldBlockPlaced;
-    private boolean locked = false;
+    @Setter private boolean locked = false;
     private int stillTicks = 0;
-    private int hp;
+    @Setter private int hp;
 
     public HiderData(UUID uuid, int maxHp) {
         this.uuid = uuid;
         this.hp = maxHp;
-    }
-
-    public UUID getUuid() {
-        return uuid;
-    }
-
-    public Material getChosenBlock() {
-        return chosenBlock;
-    }
-
-    public void setChosenBlock(Material block) {
-        this.chosenBlock = block;
-    }
-
-    public BlockDisplay getBlockDisplay() {
-        return blockDisplay;
-    }
-
-    public void setBlockDisplay(BlockDisplay d) {
-        this.blockDisplay = d;
-    }
-
-    public Interaction getPropHitbox() {
-        return propHitbox;
-    }
-
-    public Location getPlacedBlockLocation() {
-        return placedBlockLocation;
-    }
-
-    public boolean isLocked() {
-        return locked;
-    }
-
-    public void setLocked(boolean v) {
-        this.locked = v;
-    }
-
-    public int getStillTicks() {
-        return stillTicks;
     }
 
     public void resetStillTicks() {
@@ -77,20 +44,11 @@ public class HiderData {
         stillTicks++;
     }
 
-    public int getHp() {
-        return hp;
-    }
-
-    public void setHp(int hp) {
-        this.hp = hp;
-    }
-
     public boolean isAlive() {
         return hp > 0;
     }
 
-    // Spawn the display block and interaction hitbox for this hider, and position
-    // them at the player's location
+    // Spawn the display block and interaction hitbox for this hider, and position them at the player's location
     public void spawnDisplay(Player player) {
         restoreWorldBlock();
         removeDisplay();
@@ -123,32 +81,25 @@ public class HiderData {
 
     // Remove the display entities
     public void removeDisplay() {
-        if (blockDisplay != null && !blockDisplay.isDead())
-            blockDisplay.remove();
-        if (propHitbox != null && !propHitbox.isDead())
-            propHitbox.remove();
+        if (blockDisplay != null && !blockDisplay.isDead()) blockDisplay.remove();
+        if (propHitbox != null && !propHitbox.isDead()) propHitbox.remove();
+
         blockDisplay = null;
         propHitbox = null;
     }
 
-    // Update the position of the block display and the interaction hitbox to match
-    // the player's current location
+    // Update the position of the block display and the interaction hitbox to match the player's current location
     public void updateMobileDisguisePosition(Player player) {
         Location feet = player.getLocation().clone();
-        if (blockDisplay != null && !blockDisplay.isDead()) {
-            blockDisplay.teleport(feet);
-        }
-        if (propHitbox != null && !propHitbox.isDead()) {
-            propHitbox.teleport(feet);
-        }
+
+        if (blockDisplay != null && !blockDisplay.isDead()) blockDisplay.teleport(feet);
+        if (propHitbox != null && !propHitbox.isDead()) propHitbox.teleport(feet);
     }
 
-    // Place the chosen block in the world at the specified location, saving the
-    // original block data to restore later
+    // Place the chosen block in the world at the specified location, saving the original block data to restore later
     public void placeWorldBlock(Location anchor) {
         restoreWorldBlock();
-        if (chosenBlock == null || anchor == null || anchor.getWorld() == null)
-            return;
+        if (chosenBlock == null || anchor == null || anchor.getWorld() == null) return;
 
         Block block = anchor.getBlock();
         replacedBlockData = block.getBlockData().clone();
@@ -159,21 +110,17 @@ public class HiderData {
 
     // Restore the original block data at the previously placed block location
     public void restoreWorldBlock() {
-        if (!worldBlockPlaced || placedBlockLocation == null || placedBlockLocation.getWorld() == null)
-            return;
+        if (!worldBlockPlaced || placedBlockLocation == null || placedBlockLocation.getWorld() == null) return;
 
         Block block = placedBlockLocation.getBlock();
-        if (replacedBlockData != null) {
-            block.setBlockData(replacedBlockData, false);
-        }
+        if (replacedBlockData != null) block.setBlockData(replacedBlockData, false);
 
         placedBlockLocation = null;
         replacedBlockData = null;
         worldBlockPlaced = false;
     }
 
-    // Remove the disguise by deleting the display entities and restoring any world
-    // block that was placed
+    // Remove the disguise by deleting the display entities and restoring any world block that was placed
     public void clearDisguise() {
         removeDisplay();
         restoreWorldBlock();
