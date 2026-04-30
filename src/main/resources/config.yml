@@ -269,6 +269,8 @@ messages:
         seekers-win: "<gradient:#FB7185:#DC2626>=== SEEKERS WIN! ===</gradient>"
         random-disguise: "&aRandom disguise: {block}"
         unlock-first: "&cUnlock first by moving!"
+        cannot-solidify-block: "&cYou cannot solidify while standing in occupied space."
+        cannot-solidify-floor: "&cYou cannot solidify on this surface."
         invalid-disguise: "&cThat block cannot be used as a disguise."
         disguised-as: "&aDisguised as {block}!"
 

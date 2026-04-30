@@ -430,11 +430,36 @@ public class GameManager {
     }
 
     private void lockHider(Player p, HiderData data) {
+        Material chosenBlock = data.getChosenBlock();
+        if (!canSolidifyAtCurrentPosition(p, chosenBlock)) {
+            data.setLocked(false);
+            data.resetStillTicks();
+            GameMessageUtils.sendTitle(
+                    p,
+                    msg("titles.unlocked.title", "&6UNLOCKED"),
+                    msg("titles.unlocked.subtitle", "&aKeep moving")
+            );
+            p.sendMessage(msg("messages.game.cannot-solidify-block", "&cThis disguise cannot solidify here."));
+            return;
+        }
+
+        Location anchor = getFloorAnchorLocation(p, data.getChosenBlock());
+        if (anchor == null) {
+            data.setLocked(false);
+            data.resetStillTicks();
+            GameMessageUtils.sendTitle(
+                    p,
+                    msg("titles.unlocked.title", "&6UNLOCKED"),
+                    msg("titles.unlocked.subtitle", "&aKeep moving")
+            );
+            p.sendMessage(msg("messages.game.cannot-solidify-floor", "&cYou cannot solidify on this surface."));
+            return;
+        }
+
         data.setLocked(true);
         data.resetStillTicks();
         p.setInvisible(true);
         data.removeDisplay();
-        Location anchor = getFloorAnchorLocation(p, data.getChosenBlock());
         data.placeWorldBlock(anchor, p);
 
         // While locked, remove the personal world border so border push cannot pop the hider out.
@@ -457,40 +482,73 @@ public class GameManager {
         p.playSound(p.getLocation(), placeSound, 1f, 1f);
     }
 
+    private boolean canSolidifyAtCurrentPosition(Player player, Material material) {
+        if (material == null || !material.isBlock() || material.isAir()) return false;
+        if (player == null || player.getWorld() == null) return false;
+
+        Location loc = player.getLocation();
+        int x = loc.getBlockX();
+        int y = loc.getBlockY();
+        int z = loc.getBlockZ();
+        World world = player.getWorld();
+
+        // Prevent solidifying while standing inside any occupied block space.
+        if (!isValidAnchorSpace(world.getBlockAt(x, y, z).getType())) return false;
+
+        boolean needsVerticalSpace = HiderData.requiresVerticalSpace(material);
+        if (needsVerticalSpace && !isValidAnchorSpace(world.getBlockAt(x, y + 1, z).getType())) return false;
+
+        HiderData.HorizontalOffset horizontalOffset = HiderData.horizontalOffset(material, player);
+        if (horizontalOffset.x() != 0 || horizontalOffset.z() != 0) {
+            int hx = x + horizontalOffset.x();
+            int hz = z + horizontalOffset.z();
+
+            if (!isValidAnchorSpace(world.getBlockAt(hx, y, hz).getType())) return false;
+            if (needsVerticalSpace && !isValidAnchorSpace(world.getBlockAt(hx, y + 1, hz).getType())) return false;
+        }
+
+        return true;
+    }
+
     private Location getFloorAnchorLocation(Player p, Material chosenBlock) {
         Location loc = p.getLocation();
-        if (loc.getWorld() == null) return loc;
+        if (loc.getWorld() == null) return null;
 
         int x = loc.getBlockX();
         int z = loc.getBlockZ();
         int y = loc.getBlockY();
         var world = loc.getWorld();
 
-        // Prefer the block directly beneath the player. If it's not solid,
-        // search downward a few blocks to find the nearest valid floor.
-        int floorY = y - 1;
+        // Anchor only at the current support level to avoid sinking the player
+        // into lower floors when standing on invalid support (e.g. anvils/slabs/stairs).
         boolean needsVerticalSpace = HiderData.requiresVerticalSpace(chosenBlock);
         HiderData.HorizontalOffset horizontalOffset = HiderData.horizontalOffset(chosenBlock, p);
         boolean needsHorizontalSpace = horizontalOffset.x() != 0 || horizontalOffset.z() != 0;
-        for (int checkY = y - 1; checkY >= Math.max(y - 6, world.getMinHeight()); checkY--) {
-            Material floorType = world.getBlockAt(x, checkY, z).getType();
-            Material anchorType = world.getBlockAt(x, checkY + 1, z).getType();
-            Material upperAnchorType = world.getBlockAt(x, checkY + 2, z).getType();
 
-            Material horizontalFloorType = needsHorizontalSpace
-                ? world.getBlockAt(x + horizontalOffset.x(), checkY, z + horizontalOffset.z()).getType()
+        Material supportAtFeet = world.getBlockAt(x, y, z).getType();
+        boolean standingInBlock = !isValidAnchorSpace(supportAtFeet);
+        if (standingInBlock && !isValidFloorBlock(supportAtFeet)) {
+            // Example: anvil/slab/stairs. Do not sink the player to a lower floor.
+            return null;
+        }
+
+        int floorY = standingInBlock ? y : y - 1;
+        Material floorType = world.getBlockAt(x, floorY, z).getType();
+        Material anchorType = world.getBlockAt(x, floorY + 1, z).getType();
+        Material upperAnchorType = world.getBlockAt(x, floorY + 2, z).getType();
+
+        Material horizontalFloorType = needsHorizontalSpace
+                ? world.getBlockAt(x + horizontalOffset.x(), floorY, z + horizontalOffset.z()).getType()
                 : Material.AIR;
-            Material horizontalAnchorType = needsHorizontalSpace
-                ? world.getBlockAt(x + horizontalOffset.x(), checkY + 1, z + horizontalOffset.z()).getType()
+        Material horizontalAnchorType = needsHorizontalSpace
+                ? world.getBlockAt(x + horizontalOffset.x(), floorY + 1, z + horizontalOffset.z()).getType()
                 : Material.AIR;
 
-            if (isValidFloorBlock(floorType)
-                    && isValidAnchorSpace(anchorType)
+        if (!(isValidFloorBlock(floorType)
+                && isValidAnchorSpace(anchorType)
                 && (!needsHorizontalSpace || (isValidFloorBlock(horizontalFloorType) && isValidAnchorSpace(horizontalAnchorType)))
-                    && (!needsVerticalSpace || isValidAnchorSpace(upperAnchorType))) {
-                floorY = checkY;
-                break;
-            }
+                && (!needsVerticalSpace || isValidAnchorSpace(upperAnchorType)))) {
+            return null;
         }
 
         return new Location(world, x + 0.5, floorY + 1.0, z + 0.5);
@@ -620,8 +678,7 @@ public class GameManager {
         if (state != State.SEEKING_PHASE) return false;
 
         for (Map.Entry<UUID, HiderData> entry : hiders.entrySet()) {
-            Location placed = entry.getValue().getPlacedBlockLocation();
-            if (sameBlock(placed, blockLocation)) {
+            if (entry.getValue().occupiesWorldBlock(blockLocation)) {
                 applyHiderHit(seeker, entry.getKey());
                 return true;
             }

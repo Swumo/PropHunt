@@ -67,7 +67,7 @@ public class HiderData {
             return;
 
         BlockData orientedData = createOrientedBlockData(player);
-        List<DisguisePart> parts = buildDisguiseParts(orientedData);
+        List<DisguisePart> parts = buildDisplayParts(orientedData);
         for (DisguisePart part : parts) {
             BlockDisplay display = player.getWorld().spawn(player.getLocation(), BlockDisplay.class, bd -> {
                 bd.setBlock(part.blockData());
@@ -113,7 +113,7 @@ public class HiderData {
 
         Location feet = player.getLocation().clone();
         BlockData orientedData = createOrientedBlockData(player);
-        List<DisguisePart> parts = buildDisguiseParts(orientedData);
+        List<DisguisePart> parts = buildDisplayParts(orientedData);
 
         if (blockDisplays.size() != parts.size()) {
             // Defensive fallback: rebuild displays if part count changed unexpectedly.
@@ -185,6 +185,21 @@ public class HiderData {
         return blockDisplays.contains(display);
     }
 
+    public boolean occupiesWorldBlock(Location blockLocation) {
+        if (!worldBlockPlaced || blockLocation == null || blockLocation.getWorld() == null) return false;
+
+        for (PlacedBlockState state : replacedBlockStates) {
+            Location location = state.location();
+            if (location.getBlockX() == blockLocation.getBlockX()
+                    && location.getBlockY() == blockLocation.getBlockY()
+                    && location.getBlockZ() == blockLocation.getBlockZ()) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public static boolean requiresVerticalSpace(Material material) {
         if (material == null || !material.isBlock() || material.isAir()) return false;
 
@@ -227,6 +242,18 @@ public class HiderData {
 
         parts.add(new DisguisePart(baseData, 0f, 0f, 0f));
         return parts;
+    }
+
+    private List<DisguisePart> buildDisplayParts(BlockData baseData) {
+        List<DisguisePart> parts = new ArrayList<>();
+        if (baseData instanceof Bed bedData) {
+            Bed foot = (Bed) bedData.clone();
+            foot.setPart(Bed.Part.FOOT);
+            parts.add(new DisguisePart(foot, 0f, 0f, 0f));
+            return parts;
+        }
+
+        return buildDisguiseParts(baseData);
     }
 
     private BlockData withHalf(BlockData source, Bisected.Half half) {

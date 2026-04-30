@@ -4,6 +4,7 @@ import me.swumo.prophunt.PropHunt;
 import me.swumo.prophunt.game.GameManager;
 import me.swumo.prophunt.game.HiderData;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Interaction;
@@ -26,6 +27,7 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 
 public class GameListeners implements Listener {
@@ -110,6 +112,11 @@ public class GameListeners implements Listener {
         if (!(event.getWhoClicked() instanceof Player player)) return;
         if (!gm().isSeeker(player)) return;
 
+        if (moveLockedSeekerWeaponFromOffhand(player)) {
+            event.setCancelled(true);
+            return;
+        }
+
         if (gm().isLockedSeekerWeapon(event.getCurrentItem()) || gm().isLockedSeekerWeapon(event.getCursor())) {
             event.setCancelled(true);
             return;
@@ -157,9 +164,30 @@ public class GameListeners implements Listener {
     public void onPlayerSwapHandItems(PlayerSwapHandItemsEvent event) {
         Player player = event.getPlayer();
         if (!gm().isSeeker(player)) return;
-        if (!gm().isLockedSeekerWeapon(event.getMainHandItem())) return;
+        boolean mainHandLocked = gm().isLockedSeekerWeapon(event.getMainHandItem());
+        boolean offHandLocked = gm().isLockedSeekerWeapon(event.getOffHandItem());
+        if (!mainHandLocked && !offHandLocked) return;
 
         event.setCancelled(true);
+        if (offHandLocked) {
+            moveLockedSeekerWeaponFromOffhand(player);
+        }
+    }
+
+    private boolean moveLockedSeekerWeaponFromOffhand(Player player) {
+        PlayerInventory inventory = player.getInventory();
+        ItemStack offhand = inventory.getItemInOffHand();
+        if (!gm().isLockedSeekerWeapon(offhand)) return false;
+
+        ItemStack slotZero = inventory.getItem(GameManager.SEEKER_WEAPON_SLOT);
+        if (slotZero != null && !slotZero.getType().isAir() && !gm().isLockedSeekerWeapon(slotZero)) {
+            inventory.addItem(slotZero);
+        }
+
+        inventory.setItem(GameManager.SEEKER_WEAPON_SLOT, offhand.clone());
+        inventory.setItemInOffHand(new ItemStack(Material.AIR));
+        inventory.setHeldItemSlot(GameManager.SEEKER_WEAPON_SLOT);
+        return true;
     }
 
     @EventHandler
