@@ -16,11 +16,17 @@ import org.bukkit.event.block.BlockDamageEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerInteractAtEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.PlayerInventory;
 
 public class GameListeners implements Listener {
     private final PropHunt plugin;
@@ -50,9 +56,12 @@ public class GameListeners implements Listener {
                 if (gm().isSeeker(seeker)) gm().handleHiderHit(seeker, bd);
             }
             case Player victim -> {
+                if (gm().isSeeker(seeker)) {
+                    event.setCancelled(true);
+                }
+
                 HiderData data = gm().getHiderData(victim.getUniqueId());
                 if (gm().isSeeker(seeker) && gm().isHider(victim) && data != null && !data.isLocked()) {
-                    event.setCancelled(true);
                     gm().handleHiderHit(seeker, victim);
                 }
             }
@@ -93,6 +102,71 @@ public class GameListeners implements Listener {
         if (!gm().handleHiderBlockHit(seeker, event.getClickedBlock().getLocation())) return;
 
         event.setCancelled(true);
+    }
+
+    // Prevent seekers from moving their locked seeker weapon in their inventory or dropping it
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onInventoryClick(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+        if (!gm().isSeeker(player)) return;
+
+        if (gm().isLockedSeekerWeapon(event.getCurrentItem()) || gm().isLockedSeekerWeapon(event.getCursor())) {
+            event.setCancelled(true);
+            return;
+        }
+
+        if (event.getHotbarButton() == GameManager.SEEKER_WEAPON_SLOT) {
+            PlayerInventory inventory = player.getInventory();
+            if (gm().isLockedSeekerWeapon(inventory.getItem(GameManager.SEEKER_WEAPON_SLOT))) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+
+        if (event.getClickedInventory() instanceof PlayerInventory && event.getSlot() == GameManager.SEEKER_WEAPON_SLOT) {
+            event.setCancelled(true);
+        }
+    }
+    // Prevent seekers from dragging the locked seeker weapon or swapping it to their off-hand
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onInventoryDrag(InventoryDragEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+        if (!gm().isSeeker(player)) return;
+
+        if (gm().isLockedSeekerWeapon(event.getOldCursor())) {
+            event.setCancelled(true);
+            return;
+        }
+
+        if (!event.getRawSlots().contains(GameManager.SEEKER_WEAPON_SLOT)) return;
+        if (gm().isLockedSeekerWeapon(player.getInventory().getItem(GameManager.SEEKER_WEAPON_SLOT))) {
+            event.setCancelled(true);
+        }
+    }
+    // Prevent seekers from dropping the locked seeker weapon
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onPlayerDropItem(PlayerDropItemEvent event) {
+        Player player = event.getPlayer();
+        if (!gm().isSeeker(player)) return;
+        if (!gm().isLockedSeekerWeapon(event.getItemDrop().getItemStack())) return;
+
+        event.setCancelled(true);
+    }
+    // Prevent seekers from swapping the locked seeker weapon to their off-hand
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onPlayerSwapHandItems(PlayerSwapHandItemsEvent event) {
+        Player player = event.getPlayer();
+        if (!gm().isSeeker(player)) return;
+        if (!gm().isLockedSeekerWeapon(event.getMainHandItem())) return;
+
+        event.setCancelled(true);
+    }
+
+    @EventHandler
+    public void onInventoryClose(InventoryCloseEvent event) {
+        if (!(event.getPlayer() instanceof Player player)) return;
+
+        gm().setBlockSelectionMenuOpen(player, false);
     }
 
     // Handle player movement to unlock them if they move off their locked block

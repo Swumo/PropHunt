@@ -158,6 +158,7 @@ public class PropHuntCommand {
 
     @Command("prophunt|ph status")
     @CommandDescription("Show game status.")
+    @Permission("prophunt.admin")
     public void status(CommandSourceStack stack) {
         CommandSender sender = stack.getSender();
         GameManager gm = plugin.getGameManager();

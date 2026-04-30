@@ -66,6 +66,8 @@ public class BlockSelectGUI {
         
         // Display page info
         String pageInfo = totalPages > 1 ? " §7(" + (pageNumber + 1) + "/" + totalPages + ")" : "";
+
+        plugin.getGameManager().setBlockSelectionMenuOpen(player, true);
         
         Window.single()
             .setViewer(player)

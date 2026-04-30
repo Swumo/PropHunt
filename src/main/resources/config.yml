@@ -36,6 +36,87 @@ gameplay:
         - 300
         - 60
 
+    # Main deny list used by disguise validation.
+    # This includes the blocks that were previously hardcoded in GameManager.
+    blocked-disguise-blocks:
+        - BEDROCK
+        - BARRIER
+        - COMMAND_BLOCK
+        - CHAIN_COMMAND_BLOCK
+        - REPEATING_COMMAND_BLOCK
+        - WATER
+        - LAVA
+        - LIGHT
+        - STRUCTURE_VOID
+        - WHITE_CARPET
+        - ORANGE_CARPET
+        - MAGENTA_CARPET
+        - LIGHT_BLUE_CARPET
+        - YELLOW_CARPET
+        - LIME_CARPET
+        - PINK_CARPET
+        - GRAY_CARPET
+        - LIGHT_GRAY_CARPET
+        - CYAN_CARPET
+        - PURPLE_CARPET
+        - BLUE_CARPET
+        - BROWN_CARPET
+        - GREEN_CARPET
+        - RED_CARPET
+        - BLACK_CARPET
+        - SNOW
+        - SNOW_BLOCK
+
+    # Whitelist for non-solid blocks that should still be valid disguises.
+    allowed-non-solid-disguise-blocks:
+        - SHORT_GRASS
+        - FERN
+        - TALL_GRASS
+        - LARGE_FERN
+        - SUNFLOWER
+        - LILAC
+        - ROSE_BUSH
+        - PEONY
+        - PITCHER_PLANT
+        - WHITE_BED
+        - ORANGE_BED
+        - MAGENTA_BED
+        - LIGHT_BLUE_BED
+        - YELLOW_BED
+        - LIME_BED
+        - PINK_BED
+        - GRAY_BED
+        - LIGHT_GRAY_BED
+        - CYAN_BED
+        - PURPLE_BED
+        - BLUE_BED
+        - BROWN_BED
+        - GREEN_BED
+        - RED_BED
+        - BLACK_BED
+        - IRON_DOOR
+        - OAK_DOOR
+        - SPRUCE_DOOR
+        - BIRCH_DOOR
+        - JUNGLE_DOOR
+        - ACACIA_DOOR
+        - DARK_OAK_DOOR
+        - MANGROVE_DOOR
+        - CHERRY_DOOR
+        - PALE_OAK_DOOR
+        - BAMBOO_DOOR
+        - CRIMSON_DOOR
+        - WARPED_DOOR
+
+    # Explicitly allow specific disguise blocks, bypassing built-in restrictions.
+    # Use this for special cases that you know are safe for your server.
+    # Example values: IRON_DOOR, WHITE_BED, TALL_GRASS
+    force-allow-disguise-blocks: []
+
+    # Explicitly deny specific disguise blocks, even if they would normally be allowed.
+    # Useful for quickly removing problematic blocks without code changes.
+    force-deny-disguise-blocks: []
+
     # Used when arena sampling finds no valid blocks.
     default-hider-blocks:
         - GRASS_BLOCK
@@ -105,7 +186,7 @@ titles:
         subtitle: "<gradient:#86EFAC:#22C55E>Keep moving</gradient>"
     found:
         title: "<gradient:#FB7185:#B91C1C>You Were Found</gradient>"
-        subtitle: "&#D1D5DBSpectating now"
+        subtitle: "&#D1D5DBYou are now a seeker"
     hiders-win:
         title: "<gradient:#6EE7B7:#16A34A>HIDERS WIN</gradient>"
         subtitle: "&#FDE68ARound over"
@@ -177,6 +258,9 @@ messages:
         seeker-release-delay: "&#FB7185Seekers: releasing in {seconds} seconds!"
         seekers-released: "<gradient:#F97316:#EF4444>Seekers RELEASED! Find the props!</gradient>"
         time-remaining: "&#FDE68A{time} remaining!"
+        final-minute-blocks-header: "&#F59E0BOne minute left! &#FDE68ARemaining hider blocks:"
+        final-minute-blocks-line: "&#FDE68A{count}x &f{block}"
+        final-minute-blocks-none: "&7No hiders are left."
         hider-hit: "&cYou were hit! HP: {hp}"
         seeker-hit-confirm: "&eHIT!"
         must-hit-disguise-block: "&cYou must hit the disguise block, not the player."
@@ -185,6 +269,7 @@ messages:
         seekers-win: "<gradient:#FB7185:#DC2626>=== SEEKERS WIN! ===</gradient>"
         random-disguise: "&aRandom disguise: {block}"
         unlock-first: "&cUnlock first by moving!"
+        invalid-disguise: "&cThat block cannot be used as a disguise."
         disguised-as: "&aDisguised as {block}!"
 
     arena:
