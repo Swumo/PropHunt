@@ -4,6 +4,7 @@ import lombok.Getter;
 import me.swumo.prophunt.PropHunt;
 import me.swumo.prophunt.platform.PlatformScheduler;
 import me.swumo.prophunt.platform.PlatformScheduler.PlatformTask;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.command.CommandSender;
@@ -28,7 +29,6 @@ public class GameManager {
     private final Map<UUID, HiderData> hiders = new HashMap<>();
     private final Set<UUID> seekers = new HashSet<>();
     private final Map<UUID, Location> lastLocations = new HashMap<>();
-    private final Map<UUID, Boolean> previousCollidable = new HashMap<>();
     private final Map<UUID, Location> frozenSeekers = new HashMap<>();
     private final Set<UUID> queuedPlayers = new LinkedHashSet<>();
     private final List<Material> currentArenaBlockPool = new ArrayList<>();
@@ -49,9 +49,6 @@ public class GameManager {
     private int seekerHitCooldownTicks;
     private int freezeBlindnessBufferSeconds;
     private int countdownTitleThresholdSeconds;
-    private int titleFadeInTicks;
-    private int titleStayTicks;
-    private int titleFadeOutTicks;
     private List<Integer> roundWarningSeconds = new ArrayList<>();
     private final List<Material> defaultHiderBlocks = new ArrayList<>();
     private static final EnumSet<Material> FALLBACK_HIDER_BLOCKS = EnumSet.of(
@@ -62,7 +59,7 @@ public class GameManager {
             Material.CHEST, Material.BARREL, Material.HAY_BLOCK, Material.MELON,
             Material.PUMPKIN, Material.TNT, Material.CACTUS, Material.CLAY,
             Material.SMOOTH_STONE, Material.ANDESITE, Material.DIORITE, Material.GRANITE,
-            Material.OAK_LEAVES, Material.SNOW_BLOCK, Material.ICE, Material.FURNACE
+            Material.OAK_LEAVES, Material.ICE, Material.FURNACE
     );
 
     public GameManager(PropHunt plugin) {
@@ -392,21 +389,78 @@ public class GameManager {
 
     private Location getFloorAnchorLocation(Player p) {
         Location loc = p.getLocation();
+        if (loc.getWorld() == null) return loc;
+
         int x = loc.getBlockX();
         int z = loc.getBlockZ();
         int y = loc.getBlockY();
+        var world = loc.getWorld();
 
         // Prefer the block directly beneath the player. If it's not solid,
-        // search downward a few blocks to find the nearest floor.
+        // search downward a few blocks to find the nearest valid floor.
         int floorY = y - 1;
-        for (int checkY = y - 1; checkY >= Math.max(y - 6, loc.getWorld().getMinHeight()); checkY--) {
-            if (loc.getWorld().getBlockAt(x, checkY, z).getType().isSolid()) {
+        for (int checkY = y - 1; checkY >= Math.max(y - 6, world.getMinHeight()); checkY--) {
+            Material floorType = world.getBlockAt(x, checkY, z).getType();
+            Material anchorType = world.getBlockAt(x, checkY + 1, z).getType();
+            if (isValidFloorBlock(floorType) && isValidAnchorSpace(anchorType)) {
                 floorY = checkY;
                 break;
             }
         }
 
-        return new Location(loc.getWorld(), x + 0.5, floorY + 1.0, z + 0.5);
+        return new Location(world, x + 0.5, floorY + 1.0, z + 0.5);
+    }
+
+    private boolean isValidAnchorSpace(Material mat) {
+        // Only allow placing into air-like blocks so we never replace decorations
+        // such as panes, walls, fences, torches, flower pots, etc.
+        return mat.isAir();
+    }
+
+    private boolean isValidFloorBlock(Material mat) {
+        if (!mat.isSolid() || mat.isAir()) return false;
+
+        // Reject multi-block structures and problematic materials
+        return switch (mat) {
+            // Doors (all types)
+            case IRON_DOOR, OAK_DOOR, SPRUCE_DOOR, BIRCH_DOOR, JUNGLE_DOOR, ACACIA_DOOR, 
+                 DARK_OAK_DOOR, MANGROVE_DOOR, CHERRY_DOOR, PALE_OAK_DOOR, CRIMSON_DOOR, WARPED_DOOR -> false;
+            // Trapdoors (all types)
+            case IRON_TRAPDOOR, OAK_TRAPDOOR, SPRUCE_TRAPDOOR, BIRCH_TRAPDOOR, JUNGLE_TRAPDOOR,
+                 ACACIA_TRAPDOOR, DARK_OAK_TRAPDOOR, MANGROVE_TRAPDOOR, CHERRY_TRAPDOOR, PALE_OAK_TRAPDOOR,
+                 CRIMSON_TRAPDOOR, WARPED_TRAPDOOR -> false;
+            // Beds and other multi-block furniture
+            case RED_BED, BLACK_BED, BLUE_BED, BROWN_BED, CYAN_BED, GRAY_BED, GREEN_BED, LIGHT_BLUE_BED,
+                 LIGHT_GRAY_BED, LIME_BED, MAGENTA_BED, ORANGE_BED, PINK_BED, PURPLE_BED, WHITE_BED, YELLOW_BED -> false;
+            // Flower pots (fragile decorations)
+            case FLOWER_POT, POTTED_OAK_SAPLING, POTTED_SPRUCE_SAPLING, POTTED_BIRCH_SAPLING, POTTED_JUNGLE_SAPLING,
+                 POTTED_ACACIA_SAPLING, POTTED_DARK_OAK_SAPLING, POTTED_MANGROVE_PROPAGULE, POTTED_CHERRY_SAPLING,
+                 POTTED_PALE_OAK_SAPLING, POTTED_FERN, POTTED_DANDELION, POTTED_POPPY, POTTED_BLUE_ORCHID,
+                 POTTED_ALLIUM, POTTED_AZURE_BLUET, POTTED_RED_TULIP, POTTED_ORANGE_TULIP, POTTED_WHITE_TULIP,
+                 POTTED_PINK_TULIP, POTTED_OXEYE_DAISY, POTTED_CORNFLOWER, POTTED_LILY_OF_THE_VALLEY,
+                 POTTED_WITHER_ROSE, POTTED_TORCHFLOWER, POTTED_DEAD_BUSH, POTTED_CACTUS, POTTED_BAMBOO,
+                 POTTED_CRIMSON_FUNGUS, POTTED_WARPED_FUNGUS, POTTED_CRIMSON_ROOTS, POTTED_WARPED_ROOTS -> false;
+            // Double chests (use single chest as floor instead)
+            case CHEST -> false;
+            // Pistons
+            case PISTON, STICKY_PISTON, MOVING_PISTON -> false;
+            // Rails 
+            case RAIL, POWERED_RAIL, DETECTOR_RAIL, ACTIVATOR_RAIL -> false;
+            // Slabs and stairs (uneven surfaces that can cause teleportation issues)
+            case OAK_SLAB, SPRUCE_SLAB, BIRCH_SLAB, JUNGLE_SLAB, ACACIA_SLAB, DARK_OAK_SLAB, MANGROVE_SLAB,
+                 CHERRY_SLAB, PALE_OAK_SLAB, CRIMSON_SLAB, WARPED_SLAB,
+                 OAK_STAIRS, SPRUCE_STAIRS, BIRCH_STAIRS, JUNGLE_STAIRS, ACACIA_STAIRS, DARK_OAK_STAIRS,
+                 MANGROVE_STAIRS, CHERRY_STAIRS, PALE_OAK_STAIRS, CRIMSON_STAIRS, WARPED_STAIRS -> false;
+            // Other non-full blocks that can cause issues
+            case GLASS_PANE, IRON_BARS, COBBLESTONE_WALL, MOSSY_COBBLESTONE_WALL, GRANITE_WALL, DIORITE_WALL, ANDESITE_WALL,
+                 NETHER_BRICK_FENCE, BONE_BLOCK, ANVIL, CHIPPED_ANVIL, DAMAGED_ANVIL,
+                 BEACON, ENCHANTING_TABLE -> false;
+            // Other problematic blocks
+            case BEDROCK, BARRIER, STRUCTURE_BLOCK, JIGSAW, END_PORTAL_FRAME, END_PORTAL,
+                 SPAWNER -> false;
+            
+            default -> true;
+        };
     }
 
     public void unlockHider(Player p) {
@@ -424,6 +478,17 @@ public class GameManager {
 
         data.spawnDisplay(p);
         sendTitle(p, msg("titles.unlocked.title", "&eUNLOCKED"), msg("titles.unlocked.subtitle", "&aKeep moving"));
+    }
+
+    public void handleHiderHit(Player seeker, Player hider) {
+        if (state != State.SEEKING_PHASE) return;
+        if (hider == null || !hider.isOnline()) return;
+
+        HiderData data = hiders.get(hider.getUniqueId());
+        if (data == null) return;
+        if (data.isLocked()) return;
+
+        applyHiderHit(seeker, hider.getUniqueId());
     }
 
     public void handleHiderHit(Player seeker, org.bukkit.entity.BlockDisplay display) {
@@ -902,11 +967,34 @@ public class GameManager {
         if (mat == null) return false;
         if (!mat.isBlock() || !mat.isSolid() || mat.isAir()) return false;
 
-        return switch (mat) {
+        // Reject problematic materials
+        if (switch (mat) {
             case BEDROCK, BARRIER, COMMAND_BLOCK, CHAIN_COMMAND_BLOCK, REPEATING_COMMAND_BLOCK,
-                 WATER, LAVA, LIGHT, STRUCTURE_VOID -> false;
-            default -> true;
-        };
+                 WATER, LAVA, LIGHT, STRUCTURE_VOID -> true;
+            // Reject all slabs (players can stand on top, making hider visible)
+            case STONE_SLAB, SMOOTH_STONE_SLAB, SANDSTONE_SLAB, PETRIFIED_OAK_SLAB, COBBLESTONE_SLAB,
+                 BRICK_SLAB, STONE_BRICK_SLAB, NETHER_BRICK_SLAB, QUARTZ_SLAB, RED_SANDSTONE_SLAB,
+                 PURPUR_SLAB, PRISMARINE_SLAB, PRISMARINE_BRICK_SLAB, DARK_PRISMARINE_SLAB,
+                 OAK_SLAB, SPRUCE_SLAB, BIRCH_SLAB, JUNGLE_SLAB, ACACIA_SLAB, DARK_OAK_SLAB,
+                 MANGROVE_SLAB, CHERRY_SLAB, PALE_OAK_SLAB, BAMBOO_SLAB, WARPED_SLAB, CRIMSON_SLAB,
+                 BLACKSTONE_SLAB, POLISHED_BLACKSTONE_SLAB, POLISHED_BLACKSTONE_BRICK_SLAB -> true;
+            // Reject stairs (players can stand on top)
+            case STONE_STAIRS, SANDSTONE_STAIRS, NETHER_BRICK_STAIRS, STONE_BRICK_STAIRS,
+                 DARK_PRISMARINE_STAIRS, PRISMARINE_BRICK_STAIRS, PRISMARINE_STAIRS,
+                 OAK_STAIRS, SPRUCE_STAIRS, BIRCH_STAIRS, JUNGLE_STAIRS, ACACIA_STAIRS, DARK_OAK_STAIRS,
+                 MANGROVE_STAIRS, CHERRY_STAIRS, PALE_OAK_STAIRS, BAMBOO_STAIRS, WARPED_STAIRS, CRIMSON_STAIRS,
+                 BLACKSTONE_STAIRS, POLISHED_BLACKSTONE_STAIRS, POLISHED_BLACKSTONE_BRICK_STAIRS,
+                 RED_SANDSTONE_STAIRS, QUARTZ_STAIRS, PURPUR_STAIRS -> true;
+            // Reject carpet and similar flat blocks
+            case WHITE_CARPET, ORANGE_CARPET, MAGENTA_CARPET, LIGHT_BLUE_CARPET, YELLOW_CARPET,
+                 LIME_CARPET, PINK_CARPET, GRAY_CARPET, LIGHT_GRAY_CARPET, CYAN_CARPET, PURPLE_CARPET,
+                 BLUE_CARPET, BROWN_CARPET, GREEN_CARPET, RED_CARPET, BLACK_CARPET -> true;
+            // Reject snow and snow layers
+            case SNOW, SNOW_BLOCK -> true;
+            default -> false;
+        }) return false;
+
+        return true;
     }
 
     private void preGenerateArenaBlocks(Arena arena) {
@@ -1160,7 +1248,7 @@ public class GameManager {
     private void broadcastTitle(String title, String subtitle) {
         for (UUID recipientId : getMatchAndAdminRecipients()) {
             Player recipient = Bukkit.getPlayer(recipientId);
-            if (recipient == null || recipient.isOnline()) continue;
+            if (recipient == null || !recipient.isOnline()) continue;
 
             sendTitle(recipient, title, subtitle);
         }
@@ -1169,7 +1257,10 @@ public class GameManager {
     private void sendTitle(Player player, String title, String subtitle) {
         if (player == null) return;
 
-        player.sendTitle(title, subtitle, titleFadeInTicks, titleStayTicks, titleFadeOutTicks);
+        player.showTitle(net.kyori.adventure.title.Title.title(
+            LegacyComponentSerializer.legacySection().deserialize(title),
+            LegacyComponentSerializer.legacySection().deserialize(subtitle)
+        ));
     }
 
     private void loadSettings() {
@@ -1182,13 +1273,23 @@ public class GameManager {
         seekerHitCooldownTicks = intSetting("gameplay.seeker-hit-cooldown-ticks", null, 4, 0);
         freezeBlindnessBufferSeconds = intSetting("gameplay.freeze-blindness-buffer-seconds", null, 5, 0);
         countdownTitleThresholdSeconds = intSetting("gameplay.countdown-title-threshold-seconds", null, 5, 0);
-        titleFadeInTicks = intSetting("display.title.fade-in-ticks", null, 10, 0);
-        titleStayTicks = intSetting("display.title.stay-ticks", null, 50, 0);
-        titleFadeOutTicks = intSetting("display.title.fade-out-ticks", null, 10, 0);
         roundWarningSeconds = intListSetting("gameplay.round-warning-seconds", Arrays.asList(300, 60));
         defaultHiderBlocks.clear();
-        defaultHiderBlocks.addAll(materialListSetting("gameplay.default-hider-blocks", FALLBACK_HIDER_BLOCKS));
-        if (defaultHiderBlocks.isEmpty()) defaultHiderBlocks.addAll(FALLBACK_HIDER_BLOCKS);
+        List<Material> loadedBlocks = materialListSetting("gameplay.default-hider-blocks", FALLBACK_HIDER_BLOCKS);
+        // Filter out invalid materials (slabs, stairs, carpets, etc.)
+        for (Material mat : loadedBlocks) {
+            if (isAllowedPropMaterial(mat)) {
+                defaultHiderBlocks.add(mat);
+            }
+        }
+        if (defaultHiderBlocks.isEmpty()) {
+            // FALLBACK_HIDER_BLOCKS should only contain valid materials, but validate just in case
+            for (Material mat : FALLBACK_HIDER_BLOCKS) {
+                if (isAllowedPropMaterial(mat)) {
+                    defaultHiderBlocks.add(mat);
+                }
+            }
+        }
     }
 
     private void adjustRunningMatch(int oldHiderMaxHp, int oldSeekerGracePeriod, int oldGameDuration) {

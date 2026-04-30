@@ -39,7 +39,7 @@ public class GameListeners implements Listener {
         if (!(event.getDamager() instanceof Player seeker))
             return;
         Entity target = event.getEntity();
-
+        
         switch (target) {
             case Interaction hitbox -> {
                 event.setCancelled(true);
@@ -49,7 +49,13 @@ public class GameListeners implements Listener {
                 event.setCancelled(true);
                 if (gm().isSeeker(seeker)) gm().handleHiderHit(seeker, bd);
             }
-            case Player victim when gm().isHider(victim) && gm().isSeeker(seeker) -> event.setCancelled(true);
+            case Player victim -> {
+                HiderData data = gm().getHiderData(victim.getUniqueId());
+                if (gm().isSeeker(seeker) && gm().isHider(victim) && data != null && !data.isLocked()) {
+                    event.setCancelled(true);
+                    gm().handleHiderHit(seeker, victim);
+                }
+            }
             default -> {
                 // no-op
             }

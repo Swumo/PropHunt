@@ -6,8 +6,9 @@ import me.swumo.prophunt.commands.PropHuntCommand;
 import me.swumo.prophunt.game.GameManager;
 import me.swumo.prophunt.listeners.GameListeners;
 import me.swumo.prophunt.platform.PlatformScheduler;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.incendo.cloud.annotations.AnnotationParser;
 import org.incendo.cloud.execution.ExecutionCoordinator;
@@ -97,7 +98,11 @@ public class PropHunt extends JavaPlugin {
     }
 
     public void broadcastCommandMessage(String message) {
-        Bukkit.broadcastMessage(applyCommandPrefix(message));
+        String formatted = applyCommandPrefix(message);
+        Component component = LegacyComponentSerializer.legacySection().deserialize(formatted);
+        for (org.bukkit.entity.Player player : Bukkit.getOnlinePlayers()) {
+            player.sendMessage(component);
+        }
     }
 
     public List<String> getConfigTextList(String path, List<String> fallback) {
@@ -116,7 +121,27 @@ public class PropHunt extends JavaPlugin {
         }
         formatted = applyGradients(formatted);
         formatted = applyHexColors(formatted);
-        return ChatColor.translateAlternateColorCodes('&', formatted);
+        // Convert & codes to § (section symbol) for legacy format compatibility
+        return convertAmpersandToSection(formatted);
+    }
+
+    private String convertAmpersandToSection(String text) {
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '&' && i + 1 < text.length()) {
+                char code = text.charAt(++i);
+                // Valid color/format codes
+                if ("0123456789abcdefklmnor".indexOf(code) >= 0) {
+                    result.append('§').append(code);
+                } else {
+                    result.append(c).append(code);
+                }
+            } else {
+                result.append(c);
+            }
+        }
+        return result.toString();
     }
 
     private boolean useCommandPrefix() {
