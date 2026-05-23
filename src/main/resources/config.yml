@@ -19,6 +19,10 @@ gameplay:
     # the random hider block pool. Higher values are more accurate but heavier.
     arena-scan-max-blocks: 120000
 
+    # Minimum number of occurrences a block type must have in the sampled arena volume
+    # to be included in the hider block pool. Increase this to remove rare outliers.
+    arena-min-block-occurrences: 8
+
     # Team sizing: one seeker per this many players, rounded up, minimum 1 seeker.
     players-per-seeker: 3
 
@@ -271,6 +275,7 @@ messages:
         unlock-first: "&cUnlock first by moving!"
         cannot-solidify-block: "&cYou cannot solidify while standing in occupied space."
         cannot-solidify-floor: "&cYou cannot solidify on this surface."
+        block-change-locked-final-minute: "&cYou cannot change disguise blocks in the final minute."
         invalid-disguise: "&cThat block cannot be used as a disguise."
         disguised-as: "&aDisguised as {block}!"
 

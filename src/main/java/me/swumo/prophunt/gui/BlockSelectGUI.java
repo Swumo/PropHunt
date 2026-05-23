@@ -34,13 +34,19 @@ public class BlockSelectGUI {
             }
         }
 
+        validBlocks.sort(java.util.Comparator.comparing(
+                mat -> StringUtils.capitalize(mat.name()),
+                String.CASE_INSENSITIVE_ORDER));
+
         openPage(player, validBlocks, 0);
     }
 
     private void openPage(Player player, List<Material> blocks, int pageNumber) {
         int totalPages = (int) Math.ceil((double) blocks.size() / ITEMS_PER_PAGE);
-        if (pageNumber < 0) pageNumber = 0;
-        if (pageNumber >= totalPages) pageNumber = totalPages - 1;
+        if (pageNumber < 0)
+            pageNumber = 0;
+        if (pageNumber >= totalPages)
+            pageNumber = totalPages - 1;
         if (totalPages == 0) {
             player.sendMessage("§cNo blocks available!");
             return;
@@ -48,14 +54,14 @@ public class BlockSelectGUI {
 
         // Build GUI
         Gui gui = Gui.empty(9, 6);
-        
+
         // Add block items for this page
         int startIdx = pageNumber * ITEMS_PER_PAGE;
         int endIdx = Math.min(startIdx + ITEMS_PER_PAGE, blocks.size());
         for (int i = startIdx; i < endIdx; i++) {
             gui.setItem(i - startIdx, new BlockItem(blocks.get(i)));
         }
-        
+
         // Add navigation buttons in bottom row
         if (pageNumber > 0) {
             gui.setItem(36, new NavigationItem(player, blocks, pageNumber - 1, "§6← Previous"));
@@ -63,47 +69,49 @@ public class BlockSelectGUI {
         if (pageNumber < totalPages - 1) {
             gui.setItem(43, new NavigationItem(player, blocks, pageNumber + 1, "§6Next →"));
         }
-        
+
         // Display page info
         String pageInfo = totalPages > 1 ? " §7(" + (pageNumber + 1) + "/" + totalPages + ")" : "";
 
         plugin.getGameManager().setBlockSelectionMenuOpen(player, true);
-        
+
         Window.single()
-            .setViewer(player)
-            .setTitle(TITLE + pageInfo)
-            .setGui(gui)
-            .build()
-            .open();
+                .setViewer(player)
+                .setTitle(TITLE + pageInfo)
+                .setGui(gui)
+                .build()
+                .open();
     }
-    
+
     private boolean isValidItemMaterial(Material mat) {
         // Robust API-based filter: only real, placeable block items.
         return mat != null && mat.isBlock() && mat.isItem() && !mat.isAir();
     }
-    
+
     private class NavigationItem extends AbstractItem {
         private final Player player;
         private final List<Material> blocks;
         private final int nextPage;
         private final String displayName;
-        
+
         NavigationItem(Player player, List<Material> blocks, int nextPage, String displayName) {
             this.player = player;
             this.blocks = blocks;
             this.nextPage = nextPage;
             this.displayName = displayName;
         }
-        
+
         @Override
         public ItemProvider getItemProvider() {
             return new ItemBuilder(Material.ARROW).setDisplayName(displayName);
         }
-        
+
         @Override
-        public void handleClick(@NotNull ClickType clickType, @NotNull Player player, @NotNull InventoryClickEvent event) {
+        public void handleClick(@NotNull ClickType clickType, @NotNull Player player,
+                @NotNull InventoryClickEvent event) {
             player.closeInventory();
-            // Schedule the page opening for the next tick to ensure the inventory closes first
+            // Schedule the page opening for the next tick to ensure the inventory closes
+            // first
             org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> openPage(this.player, blocks, nextPage));
         }
     }
@@ -121,7 +129,8 @@ public class BlockSelectGUI {
         }
 
         @Override
-        public void handleClick(@NotNull ClickType clickType, @NotNull Player player, @NotNull InventoryClickEvent event) {
+        public void handleClick(@NotNull ClickType clickType, @NotNull Player player,
+                @NotNull InventoryClickEvent event) {
             plugin.getGameManager().setHiderBlock(player, material);
             player.closeInventory();
         }

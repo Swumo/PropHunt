@@ -42,8 +42,7 @@ public final class ArenaUtils {
             String key,
             String world,
             Location pos1,
-            Location pos2
-    ) {
+            Location pos2) {
     }
 
     public record ArenaDefinition(
@@ -52,8 +51,7 @@ public final class ArenaUtils {
             Location pos1,
             Location pos2,
             List<Location> hiderSpawns,
-            List<Location> seekerSpawns
-    ) {
+            List<Location> seekerSpawns) {
         public boolean hasCuboid() {
             return pos1 != null && pos2 != null && world != null;
         }
@@ -69,8 +67,7 @@ public final class ArenaUtils {
             boolean hasPos1,
             boolean hasPos2,
             int hiderSpawnCount,
-            int seekerSpawnCount
-    ) {
+            int seekerSpawnCount) {
     }
 
     // -------------------------------------------------------------------------
@@ -88,7 +85,7 @@ public final class ArenaUtils {
         public boolean blockPoolGenerated = false;
 
         public ArenaRuntime(String name, String world, Location pos1, Location pos2,
-                            List<Location> hiderSpawns, List<Location> seekerSpawns) {
+                List<Location> hiderSpawns, List<Location> seekerSpawns) {
             this.name = name;
             this.world = world;
             this.pos1 = pos1;
@@ -184,7 +181,8 @@ public final class ArenaUtils {
 
     public static List<String> getArenaNames(FileConfiguration cfg) {
         ConfigurationSection arenasSec = cfg.getConfigurationSection("arenas");
-        if (arenasSec == null) return Collections.emptyList();
+        if (arenasSec == null)
+            return Collections.emptyList();
 
         return new ArrayList<>(arenasSec.getKeys(false));
     }
@@ -192,7 +190,8 @@ public final class ArenaUtils {
     public static ArenaInfo getArenaInfo(FileConfiguration cfg, String name) {
         String key = normalizeArenaName(name);
         ConfigurationSection sec = cfg.getConfigurationSection("arenas." + key);
-        if (sec == null) return new ArenaInfo(key, false, false, false, 0, 0);
+        if (sec == null)
+            return new ArenaInfo(key, false, false, false, 0, 0);
 
         return new ArenaInfo(
                 key,
@@ -200,18 +199,19 @@ public final class ArenaUtils {
                 sec.isConfigurationSection("pos1"),
                 sec.isConfigurationSection("pos2"),
                 sec.getMapList("hider-spawns").size(),
-                sec.getMapList("seeker-spawns").size()
-        );
+                sec.getMapList("seeker-spawns").size());
     }
 
     public static List<ArenaDefinition> loadArenas(FileConfiguration cfg) {
         ConfigurationSection arenasSec = cfg.getConfigurationSection("arenas");
-        if (arenasSec == null) return Collections.emptyList();
+        if (arenasSec == null)
+            return Collections.emptyList();
 
         List<ArenaDefinition> arenas = new ArrayList<>();
         for (String name : arenasSec.getKeys(false)) {
             ConfigurationSection sec = arenasSec.getConfigurationSection(name);
-            if (sec == null) continue;
+            if (sec == null)
+                continue;
 
             String world = sec.getString("world");
             Location pos1 = readLocation(sec.getConfigurationSection("pos1"), world);
@@ -231,7 +231,8 @@ public final class ArenaUtils {
     public static List<Location> readLocationList(List<Map<?, ?>> list, String worldName) {
         List<Location> out = new ArrayList<>();
         World world = worldName == null ? null : Bukkit.getWorld(worldName);
-        if (world == null) return out;
+        if (world == null)
+            return out;
 
         for (Map<?, ?> map : list) {
             try {
@@ -249,10 +250,12 @@ public final class ArenaUtils {
     }
 
     public static Location readLocation(ConfigurationSection section, String worldName) {
-        if (section == null || worldName == null) return null;
+        if (section == null || worldName == null)
+            return null;
 
         World world = Bukkit.getWorld(worldName);
-        if (world == null) return null;
+        if (world == null)
+            return null;
 
         return new Location(
                 world,
@@ -260,8 +263,7 @@ public final class ArenaUtils {
                 section.getDouble("y"),
                 section.getDouble("z"),
                 (float) section.getDouble("yaw"),
-                (float) section.getDouble("pitch")
-        );
+                (float) section.getDouble("pitch"));
     }
 
     public static void writeLocation(ConfigurationSection section, Location location) {
@@ -274,7 +276,8 @@ public final class ArenaUtils {
 
     private static double numberFromMap(Map<?, ?> map, String key, double defaultValue) {
         Object value = map.get(key);
-        if (value instanceof Number number) return number.doubleValue();
+        if (value instanceof Number number)
+            return number.doubleValue();
 
         if (value instanceof String text) {
             try {
@@ -294,8 +297,8 @@ public final class ArenaUtils {
             Location pos1,
             Location pos2,
             int arenaScanMaxBlocks,
-            Predicate<Material> allowMaterial
-    ) {
+            int minOccurrences,
+            Predicate<Material> allowMaterial) {
         if (pos1 == null || pos2 == null || pos1.getWorld() == null || pos2.getWorld() == null) {
             return Collections.emptyList();
         }
@@ -312,23 +315,31 @@ public final class ArenaUtils {
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
                 for (int z = minZ; z <= maxZ; z++) {
-                    if (scanned++ >= arenaScanMaxBlocks) break;
+                    if (scanned++ >= arenaScanMaxBlocks)
+                        break;
 
                     Block block = pos1.getWorld().getBlockAt(x, y, z);
                     Material material = block.getType();
-                    if (!allowMaterial.test(material)) continue;
+                    if (!allowMaterial.test(material))
+                        continue;
 
                     counts.put(material, counts.getOrDefault(material, 0) + 1);
                 }
-                if (scanned >= arenaScanMaxBlocks) break;
+                if (scanned >= arenaScanMaxBlocks)
+                    break;
             }
-            if (scanned >= arenaScanMaxBlocks) break;
+            if (scanned >= arenaScanMaxBlocks)
+                break;
         }
 
-        if (counts.isEmpty()) return Collections.emptyList();
+        if (counts.isEmpty())
+            return Collections.emptyList();
 
         List<Material> weighted = new ArrayList<>();
         for (Map.Entry<Material, Integer> entry : counts.entrySet()) {
+            if (entry.getValue() < minOccurrences)
+                continue;
+
             int weight = Math.max(1, Math.min(40, entry.getValue() / 8));
             for (int i = 0; i < weight; i++) {
                 weighted.add(entry.getKey());
@@ -342,17 +353,17 @@ public final class ArenaUtils {
             Location pos1,
             Location pos2,
             int arenaScanMaxBlocks,
+            int minOccurrences,
             Predicate<Material> allowMaterial,
             List<Material> cachedBlockPool,
             Consumer<Runnable> asyncRunner,
-            Runnable markGenerated
-    ) {
+            Runnable markGenerated) {
         if (pos1 == null || pos2 == null || pos1.getWorld() == null || pos2.getWorld() == null) {
             return;
         }
 
         asyncRunner.accept(() -> {
-            List<Material> blocks = sampleArenaBlocks(pos1, pos2, arenaScanMaxBlocks, allowMaterial);
+            List<Material> blocks = sampleArenaBlocks(pos1, pos2, arenaScanMaxBlocks, minOccurrences, allowMaterial);
             if (!blocks.isEmpty()) {
                 cachedBlockPool.clear();
                 cachedBlockPool.addAll(blocks);

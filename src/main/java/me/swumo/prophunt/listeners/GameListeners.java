@@ -9,6 +9,7 @@ import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Interaction;
 import org.bukkit.entity.Player;
+import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -41,21 +42,24 @@ public class GameListeners implements Listener {
         return plugin.getGameManager();
     }
 
-    // Handle seekers hitting hiders by left-clicking them or their interaction hitboxes/block displays
+    // Handle seekers hitting hiders by left-clicking them or their interaction
+    // hitboxes/block displays
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onEntityDamageByEntity(EntityDamageByEntityEvent event) {
         if (!(event.getDamager() instanceof Player seeker))
             return;
         Entity target = event.getEntity();
-        
+
         switch (target) {
             case Interaction hitbox -> {
                 event.setCancelled(true);
-                if (gm().isSeeker(seeker)) gm().handleHiderHit(seeker, hitbox);
+                if (gm().isSeeker(seeker))
+                    gm().handleHiderHit(seeker, hitbox);
             }
             case BlockDisplay bd -> {
                 event.setCancelled(true);
-                if (gm().isSeeker(seeker)) gm().handleHiderHit(seeker, bd);
+                if (gm().isSeeker(seeker))
+                    gm().handleHiderHit(seeker, bd);
             }
             case Player victim -> {
                 if (gm().isSeeker(seeker)) {
@@ -77,9 +81,14 @@ public class GameListeners implements Listener {
     // Prevent hiders from taking any damage during the seeking phase
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onPlayerDamage(EntityDamageEvent event) {
-        if (!(event.getEntity() instanceof Player p)) return;
+        if (!(event.getEntity() instanceof Player p))
+            return;
 
-        if (gm().getState() == GameManager.State.SEEKING_PHASE && gm().isHider(p))
+        if (!gm().isHider(p))
+            return;
+
+        HiderData data = gm().getHiderData(p.getUniqueId());
+        if (gm().getState() == GameManager.State.SEEKING_PHASE || (data != null && data.isLocked()))
             event.setCancelled(true);
     }
 
@@ -87,8 +96,10 @@ public class GameListeners implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onBlockDamage(BlockDamageEvent event) {
         Player seeker = event.getPlayer();
-        if (!gm().isSeeker(seeker)) return;
-        if (!gm().handleHiderBlockHit(seeker, event.getBlock().getLocation())) return;
+        if (!gm().isSeeker(seeker))
+            return;
+        if (!gm().handleHiderBlockHit(seeker, event.getBlock().getLocation()))
+            return;
 
         event.setCancelled(true);
     }
@@ -97,20 +108,59 @@ public class GameListeners implements Listener {
     // reason
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlayerLeftClickBlock(PlayerInteractEvent event) {
-        if (event.getAction() != Action.LEFT_CLICK_BLOCK || event.getClickedBlock() == null) return;
+        if (event.getAction() != Action.LEFT_CLICK_BLOCK || event.getClickedBlock() == null)
+            return;
 
         Player seeker = event.getPlayer();
-        if (!gm().isSeeker(seeker)) return;
-        if (!gm().handleHiderBlockHit(seeker, event.getClickedBlock().getLocation())) return;
+        if (!gm().isSeeker(seeker))
+            return;
+        if (!gm().handleHiderBlockHit(seeker, event.getClickedBlock().getLocation()))
+            return;
 
         event.setCancelled(true);
     }
 
-    // Prevent seekers from moving their locked seeker weapon in their inventory or dropping it
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onHiderMenuItemInteract(PlayerInteractEvent event) {
+        Action action = event.getAction();
+        if (action != Action.RIGHT_CLICK_AIR && action != Action.RIGHT_CLICK_BLOCK)
+            return;
+
+        EquipmentSlot hand = event.getHand();
+        if (hand == null)
+            return;
+
+        Player player = event.getPlayer();
+        if (!gm().isHider(player))
+            return;
+
+        ItemStack usedItem = event.getItem();
+        if (usedItem == null) {
+            usedItem = hand == EquipmentSlot.HAND
+                    ? player.getInventory().getItemInMainHand()
+                    : player.getInventory().getItemInOffHand();
+        }
+        if (!gm().isHiderMenuItem(usedItem))
+            return;
+
+        if (hand == EquipmentSlot.OFF_HAND && gm().isHiderMenuItem(player.getInventory().getItemInMainHand())) {
+            return;
+        }
+
+        event.setUseInteractedBlock(Event.Result.DENY);
+        event.setUseItemInHand(Event.Result.DENY);
+        event.setCancelled(true);
+        gm().openHiderBlockSelectionMenu(player);
+    }
+
+    // Prevent seekers from moving their locked seeker weapon in their inventory or
+    // dropping it
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onInventoryClick(InventoryClickEvent event) {
-        if (!(event.getWhoClicked() instanceof Player player)) return;
-        if (!gm().isSeeker(player)) return;
+        if (!(event.getWhoClicked() instanceof Player player))
+            return;
+        if (!gm().isSeeker(player))
+            return;
 
         if (moveLockedSeekerWeaponFromOffhand(player)) {
             event.setCancelled(true);
@@ -130,43 +180,55 @@ public class GameListeners implements Listener {
             }
         }
 
-        if (event.getClickedInventory() instanceof PlayerInventory && event.getSlot() == GameManager.SEEKER_WEAPON_SLOT) {
+        if (event.getClickedInventory() instanceof PlayerInventory
+                && event.getSlot() == GameManager.SEEKER_WEAPON_SLOT) {
             event.setCancelled(true);
         }
     }
-    // Prevent seekers from dragging the locked seeker weapon or swapping it to their off-hand
+
+    // Prevent seekers from dragging the locked seeker weapon or swapping it to
+    // their off-hand
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onInventoryDrag(InventoryDragEvent event) {
-        if (!(event.getWhoClicked() instanceof Player player)) return;
-        if (!gm().isSeeker(player)) return;
+        if (!(event.getWhoClicked() instanceof Player player))
+            return;
+        if (!gm().isSeeker(player))
+            return;
 
         if (gm().isLockedSeekerWeapon(event.getOldCursor())) {
             event.setCancelled(true);
             return;
         }
 
-        if (!event.getRawSlots().contains(GameManager.SEEKER_WEAPON_SLOT)) return;
+        if (!event.getRawSlots().contains(GameManager.SEEKER_WEAPON_SLOT))
+            return;
         if (gm().isLockedSeekerWeapon(player.getInventory().getItem(GameManager.SEEKER_WEAPON_SLOT))) {
             event.setCancelled(true);
         }
     }
+
     // Prevent seekers from dropping the locked seeker weapon
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onPlayerDropItem(PlayerDropItemEvent event) {
         Player player = event.getPlayer();
-        if (!gm().isSeeker(player)) return;
-        if (!gm().isLockedSeekerWeapon(event.getItemDrop().getItemStack())) return;
+        if (!gm().isSeeker(player))
+            return;
+        if (!gm().isLockedSeekerWeapon(event.getItemDrop().getItemStack()))
+            return;
 
         event.setCancelled(true);
     }
+
     // Prevent seekers from swapping the locked seeker weapon to their off-hand
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onPlayerSwapHandItems(PlayerSwapHandItemsEvent event) {
         Player player = event.getPlayer();
-        if (!gm().isSeeker(player)) return;
+        if (!gm().isSeeker(player))
+            return;
         boolean mainHandLocked = gm().isLockedSeekerWeapon(event.getMainHandItem());
         boolean offHandLocked = gm().isLockedSeekerWeapon(event.getOffHandItem());
-        if (!mainHandLocked && !offHandLocked) return;
+        if (!mainHandLocked && !offHandLocked)
+            return;
 
         event.setCancelled(true);
         if (offHandLocked) {
@@ -177,7 +239,8 @@ public class GameListeners implements Listener {
     private boolean moveLockedSeekerWeaponFromOffhand(Player player) {
         PlayerInventory inventory = player.getInventory();
         ItemStack offhand = inventory.getItemInOffHand();
-        if (!gm().isLockedSeekerWeapon(offhand)) return false;
+        if (!gm().isLockedSeekerWeapon(offhand))
+            return false;
 
         ItemStack slotZero = inventory.getItem(GameManager.SEEKER_WEAPON_SLOT);
         if (slotZero != null && !slotZero.getType().isAir() && !gm().isLockedSeekerWeapon(slotZero)) {
@@ -192,7 +255,8 @@ public class GameListeners implements Listener {
 
     @EventHandler
     public void onInventoryClose(InventoryCloseEvent event) {
-        if (!(event.getPlayer() instanceof Player player)) return;
+        if (!(event.getPlayer() instanceof Player player))
+            return;
 
         gm().setBlockSelectionMenuOpen(player, false);
     }
@@ -202,21 +266,41 @@ public class GameListeners implements Listener {
     public void onPlayerMove(PlayerMoveEvent event) {
         Player p = event.getPlayer();
 
-        if (!gm().isHider(p)) return;
+        if (!gm().isHider(p))
+            return;
 
         HiderData data = gm().getHiderData(p.getUniqueId());
-        if (data == null || !data.isLocked()) return;
+        if (data == null || !data.isLocked())
+            return;
+        if (gm().isWithinLockMovementGrace(p))
+            return;
 
+        Location from = event.getFrom();
         Location to = event.getTo();
+        if (to == null)
+            return;
+
+        double movedX = to.getX() - from.getX();
+        double movedZ = to.getZ() - from.getZ();
+        double horizontalMovedSquared = movedX * movedX + movedZ * movedZ;
+        if (horizontalMovedSquared < 0.0004)
+            return;
+
         Location placed = data.getPlacedBlockLocation();
-        if (placed == null || placed.getWorld() == null) return;
+        if (placed == null || placed.getWorld() == null)
+            return;
         if (!placed.getWorld().equals(to.getWorld())) {
             gm().unlockHider(p);
             return;
         }
 
-        boolean movedOffLockedBlock = to.getBlockX() != placed.getBlockX() || to.getBlockZ() != placed.getBlockZ();
-        if (!movedOffLockedBlock) return;
+        double centerX = placed.getX() + 0.5;
+        double centerZ = placed.getZ() + 0.5;
+        double distanceX = to.getX() - centerX;
+        double distanceZ = to.getZ() - centerZ;
+        double horizontalDistanceFromCenterSquared = distanceX * distanceX + distanceZ * distanceZ;
+        if (horizontalDistanceFromCenterSquared < 0.04)
+            return;
 
         gm().unlockHider(p);
     }
@@ -228,7 +312,8 @@ public class GameListeners implements Listener {
         gm().handlePlayerQuit(p);
     }
 
-    // Hiders cant die during gameplay, so cancel any death events and suppress the message just in case
+    // Hiders cant die during gameplay, so cancel any death events and suppress the
+    // message just in case
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlayerDeath(PlayerDeathEvent event) {
         Player p = event.getEntity();
@@ -240,13 +325,16 @@ public class GameListeners implements Listener {
         }
     }
 
-    // Handle seekers hitting hiders by left-clicking interaction hitboxes or block displays
+    // Handle seekers hitting hiders by left-clicking interaction hitboxes or block
+    // displays
     @EventHandler
     public void onInteractAtEntity(PlayerInteractAtEntityEvent event) {
-        if (event.getHand() != EquipmentSlot.HAND) return;
+        if (event.getHand() != EquipmentSlot.HAND)
+            return;
 
         Player seeker = event.getPlayer();
-        if (!gm().isSeeker(seeker)) return;
+        if (!gm().isSeeker(seeker))
+            return;
 
         Entity target = event.getRightClicked();
         if (target instanceof Interaction hitbox) {
