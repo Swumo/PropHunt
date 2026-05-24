@@ -14,6 +14,7 @@ import org.bukkit.block.data.Orientable;
 import org.bukkit.block.data.Rotatable;
 import org.bukkit.block.data.type.Bed;
 import org.bukkit.block.data.type.Stairs;
+import org.bukkit.block.data.type.TrapDoor;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Interaction;
 import org.bukkit.entity.Player;
@@ -35,6 +36,7 @@ public class HiderData {
     private final List<BlockDisplay> blockDisplays = new ArrayList<>();
     private Interaction propHitbox;
     private Location placedBlockLocation;
+    private Location lockedPlayerLocation;
     @Getter(AccessLevel.NONE)
     private final List<PlacedBlockState> replacedBlockStates = new ArrayList<>();
     @Getter(AccessLevel.NONE)
@@ -91,10 +93,10 @@ public class HiderData {
         }
 
         propHitbox = player.getWorld().spawn(anchor, Interaction.class, interaction -> {
-            boolean verticalMultipart = requiresVerticalSpace(chosenBlock);
-            boolean horizontalMultipart = requiresHorizontalSpace(chosenBlock);
-            interaction.setInteractionWidth(horizontalMultipart ? 2.2f : 1.2f);
-            interaction.setInteractionHeight(verticalMultipart ? 2.2f : 1.2f);
+            // Keep the hitbox compact so it does not steal right-click interactions
+            // from nearby map blocks (e.g., doors) while still allowing seeker hits.
+            interaction.setInteractionWidth(0.9f);
+            interaction.setInteractionHeight(1.0f);
             interaction.setResponsive(true);
             interaction.setGravity(false);
             interaction.setPersistent(false);
@@ -178,6 +180,15 @@ public class HiderData {
         placedBlockLocation = anchor.getBlock().getLocation();
     }
 
+    public void setLockedPlayerLocation(Location location) {
+        if (location == null || location.getWorld() == null) {
+            lockedPlayerLocation = null;
+            return;
+        }
+
+        lockedPlayerLocation = location.clone();
+    }
+
     // Place the chosen block in the world at the specified location, saving the
     // original block data to restore later
     public void placeWorldBlock(Location anchor) {
@@ -215,6 +226,7 @@ public class HiderData {
         }
 
         placedBlockLocation = null;
+        lockedPlayerLocation = null;
         replacedBlockStates.clear();
         worldBlockPlaced = false;
     }
@@ -318,8 +330,8 @@ public class HiderData {
             return false;
 
         // Stairs are Bisected (top/bottom) but occupy only one block, so do not split
-        // them.
-        return !(data instanceof Stairs);
+        // them. Trapdoors are also Bisected but occupy one block.
+        return !(data instanceof Stairs) && !(data instanceof TrapDoor);
     }
 
     private BlockData createOrientedBlockData(Player player) {

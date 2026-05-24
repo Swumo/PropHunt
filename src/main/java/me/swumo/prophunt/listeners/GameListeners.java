@@ -159,6 +159,34 @@ public class GameListeners implements Listener {
     public void onInventoryClick(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player player))
             return;
+
+        if (gm().isHider(player)) {
+            if (moveLockedHiderMenuItemFromOffhand(player)) {
+                event.setCancelled(true);
+                return;
+            }
+
+            if (gm().isLockedHiderMenuItem(event.getCurrentItem()) || gm().isLockedHiderMenuItem(event.getCursor())) {
+                event.setCancelled(true);
+                return;
+            }
+
+            int hiderMenuSlot = gm().getHiderMenuSlot();
+            if (event.getHotbarButton() == hiderMenuSlot) {
+                PlayerInventory inventory = player.getInventory();
+                if (gm().isLockedHiderMenuItem(inventory.getItem(hiderMenuSlot))) {
+                    event.setCancelled(true);
+                    return;
+                }
+            }
+
+            if (event.getClickedInventory() instanceof PlayerInventory
+                    && event.getSlot() == hiderMenuSlot) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+
         if (!gm().isSeeker(player))
             return;
 
@@ -192,6 +220,21 @@ public class GameListeners implements Listener {
     public void onInventoryDrag(InventoryDragEvent event) {
         if (!(event.getWhoClicked() instanceof Player player))
             return;
+
+        if (gm().isHider(player)) {
+            if (gm().isLockedHiderMenuItem(event.getOldCursor())) {
+                event.setCancelled(true);
+                return;
+            }
+
+            int hiderMenuSlot = gm().getHiderMenuSlot();
+            if (event.getRawSlots().contains(hiderMenuSlot)
+                    && gm().isLockedHiderMenuItem(player.getInventory().getItem(hiderMenuSlot))) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+
         if (!gm().isSeeker(player))
             return;
 
@@ -211,8 +254,20 @@ public class GameListeners implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onPlayerDropItem(PlayerDropItemEvent event) {
         Player player = event.getPlayer();
+
+        if (gm().isHider(player) && gm().isLockedHiderMenuItem(event.getItemDrop().getItemStack())) {
+            event.setCancelled(true);
+            return;
+        }
+
         if (!gm().isSeeker(player))
             return;
+
+        if (gm().isActiveRound()) {
+            event.setCancelled(true);
+            return;
+        }
+
         if (!gm().isLockedSeekerWeapon(event.getItemDrop().getItemStack()))
             return;
 
@@ -223,6 +278,19 @@ public class GameListeners implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onPlayerSwapHandItems(PlayerSwapHandItemsEvent event) {
         Player player = event.getPlayer();
+
+        if (gm().isHider(player)) {
+            boolean mainHandLocked = gm().isLockedHiderMenuItem(event.getMainHandItem());
+            boolean offHandLocked = gm().isLockedHiderMenuItem(event.getOffHandItem());
+            if (mainHandLocked || offHandLocked) {
+                event.setCancelled(true);
+                if (offHandLocked) {
+                    moveLockedHiderMenuItemFromOffhand(player);
+                }
+                return;
+            }
+        }
+
         if (!gm().isSeeker(player))
             return;
         boolean mainHandLocked = gm().isLockedSeekerWeapon(event.getMainHandItem());
@@ -250,6 +318,23 @@ public class GameListeners implements Listener {
         inventory.setItem(GameManager.SEEKER_WEAPON_SLOT, offhand.clone());
         inventory.setItemInOffHand(new ItemStack(Material.AIR));
         inventory.setHeldItemSlot(GameManager.SEEKER_WEAPON_SLOT);
+        return true;
+    }
+
+    private boolean moveLockedHiderMenuItemFromOffhand(Player player) {
+        PlayerInventory inventory = player.getInventory();
+        ItemStack offhand = inventory.getItemInOffHand();
+        if (!gm().isLockedHiderMenuItem(offhand))
+            return false;
+
+        int hiderMenuSlot = gm().getHiderMenuSlot();
+        ItemStack menuSlotItem = inventory.getItem(hiderMenuSlot);
+        if (menuSlotItem != null && !menuSlotItem.getType().isAir() && !gm().isLockedHiderMenuItem(menuSlotItem)) {
+            inventory.addItem(menuSlotItem);
+        }
+
+        inventory.setItem(hiderMenuSlot, offhand.clone());
+        inventory.setItemInOffHand(new ItemStack(Material.AIR));
         return true;
     }
 
@@ -294,8 +379,9 @@ public class GameListeners implements Listener {
             return;
         }
 
-        double centerX = placed.getX() + 0.5;
-        double centerZ = placed.getZ() + 0.5;
+        Location expected = data.getLockedPlayerLocation();
+        double centerX = expected != null ? expected.getX() : placed.getX() + 0.5;
+        double centerZ = expected != null ? expected.getZ() : placed.getZ() + 0.5;
         double distanceX = to.getX() - centerX;
         double distanceZ = to.getZ() - centerZ;
         double horizontalDistanceFromCenterSquared = distanceX * distanceX + distanceZ * distanceZ;
@@ -332,7 +418,14 @@ public class GameListeners implements Listener {
         if (event.getHand() != EquipmentSlot.HAND)
             return;
 
-        Player seeker = event.getPlayer();
+        Player player = event.getPlayer();
+        if (gm().isHider(player) && gm().isHiderMenuItem(player.getInventory().getItemInMainHand())) {
+            event.setCancelled(true);
+            gm().openHiderBlockSelectionMenu(player);
+            return;
+        }
+
+        Player seeker = player;
         if (!gm().isSeeker(seeker))
             return;
 

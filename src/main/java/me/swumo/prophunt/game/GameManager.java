@@ -7,12 +7,15 @@ import me.swumo.prophunt.platform.PlatformScheduler;
 import me.swumo.prophunt.platform.PlatformScheduler.PlatformTask;
 import me.swumo.prophunt.utils.ArenaUtils;
 import me.swumo.prophunt.utils.ArenaUtils.ArenaRuntime;
+import net.kyori.adventure.text.Component;
 import me.swumo.prophunt.utils.GameConfigReader;
 import me.swumo.prophunt.utils.GameFormatUtils;
 import me.swumo.prophunt.utils.GameMessageUtils;
 import me.swumo.prophunt.utils.WorldBorderUtils;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.*;
 import org.bukkit.Tag;
+import org.bukkit.block.BlockFace;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Interaction;
@@ -53,6 +56,7 @@ public class GameManager {
     private final Map<UUID, Location> lastLocations = new HashMap<>();
     private final Map<UUID, Location> frozenSeekers = new HashMap<>();
     private final Map<UUID, Long> lockedMovementGraceUntil = new HashMap<>();
+    private final Map<UUID, Long> hiderCombatTagUntil = new HashMap<>();
     private final Map<UUID, ItemStack> seekerHeldItemSnapshots = new HashMap<>();
     private final Set<UUID> blockSelectionMenuPlayers = new HashSet<>();
     private final Set<UUID> queuedPlayers = new LinkedHashSet<>();
@@ -73,6 +77,7 @@ public class GameManager {
     private int arenaMinBlockOccurrences;
     private int playersPerSeeker;
     private int seekerHitCooldownTicks;
+    private int hiderCombatTagSeconds;
     private int freezeBlindnessBufferSeconds;
     private int countdownTitleThresholdSeconds;
     private List<Integer> roundWarningSeconds = new ArrayList<>();
@@ -239,6 +244,13 @@ public class GameManager {
         assignTeams(queuedOnlinePlayers);
         state = State.HIDING_PHASE;
 
+        List<String> seekerNames = seekers.stream()
+            .map(Bukkit::getPlayer)
+            .filter(Objects::nonNull)
+            .map(Player::getName)
+            .sorted(String.CASE_INSENSITIVE_ORDER)
+            .toList();
+
         Set<UUID> matchAndAdmins = GameMessageUtils.matchAndAdminRecipients(hiders.keySet(), seekers, "prophunt.admin");
         String prefix = msg("messages.prefix", "&6[PropHunt] &r");
         GameMessageUtils.sendPrefixedChat(
@@ -256,6 +268,11 @@ public class GameManager {
                 prefix,
                 msg("messages.game.seeker-release-delay", "&cSeekers: releasing in {seconds} seconds!",
                         Map.of("seconds", seekerGracePeriod)));
+        GameMessageUtils.sendPrefixedChat(
+            matchAndAdmins,
+            prefix,
+            msg("messages.game.seekers-list", "&cSeekers this round: {seekers}",
+                Map.of("seekers", seekerNames.isEmpty() ? "Unknown" : String.join(", ", seekerNames))));
         GameMessageUtils.sendTitle(
                 matchAndAdmins,
                 msg("titles.round-start.title", "&6PropHunt Started"),
@@ -294,6 +311,7 @@ public class GameManager {
             assignPlayerToNoCollisionTeam(p, true);
             giveHiderMenuItem(p);
             assignRandomBlock(p);
+                hideHiderFromSeekers(p);
             GameMessageUtils.sendTitle(p,
                     msg("titles.hider-role.title", "&aYou are a HIDER"),
                     msg("titles.hider-role.subtitle", "&eStand still to solidify before release"));
@@ -387,14 +405,14 @@ public class GameManager {
                 endGame(true);
             } else if (gameSecondsRemaining == 60) {
                 messageRemainingBlocksToSeekers();
-                if (roundWarningSeconds.contains(gameSecondsRemaining)) {
-                    GameMessageUtils.sendPrefixedChat(participants, prefix, msg(
-                            "messages.game.time-remaining",
-                            "&e{time} remaining!",
-                            Map.of("time", GameFormatUtils.formatRemainingTime(gameSecondsRemaining), "seconds",
-                                    gameSecondsRemaining)));
-                }
-            } else if (roundWarningSeconds.contains(gameSecondsRemaining)) {
+                GameMessageUtils.sendPrefixedChat(participants, prefix, msg(
+                        "messages.game.time-remaining",
+                        "&e{time} remaining!",
+                        Map.of("time", GameFormatUtils.formatRemainingTime(gameSecondsRemaining), "seconds",
+                                gameSecondsRemaining)));
+            } else if (gameSecondsRemaining == 30
+                    || (gameSecondsRemaining <= 10)
+                    || roundWarningSeconds.contains(gameSecondsRemaining)) {
                 GameMessageUtils.sendPrefixedChat(participants, prefix, msg(
                         "messages.game.time-remaining",
                         "&e{time} remaining!",
@@ -432,9 +450,11 @@ public class GameManager {
 
             if (data.isLocked()) {
                 p.setInvisible(true);
+                hideHiderFromSeekers(p);
                 if (data.getPlacedBlockLocation() != null) {
-                    double yOffset = HiderData.requiresVerticalSpace(data.getChosenBlock()) ? 2.001 : 1.001;
-                    Location anchor = data.getPlacedBlockLocation().clone().add(0.5, yOffset, 0.5);
+                    Location anchor = data.getLockedPlayerLocation() != null
+                            ? data.getLockedPlayerLocation().clone()
+                            : data.getPlacedBlockLocation().clone().add(0.5, 1.001, 0.5);
                     anchor.setYaw(p.getLocation().getYaw());
                     anchor.setPitch(p.getLocation().getPitch());
 
@@ -452,6 +472,7 @@ public class GameManager {
             }
 
             p.setInvisible(true);
+            hideHiderFromSeekers(p);
             data.updateMobileDisguisePosition(p);
             if (isInBlockSelectionMenu(p)) {
                 data.resetStillTicks();
@@ -483,17 +504,6 @@ public class GameManager {
 
     private void lockHider(Player p, HiderData data) {
         Material chosenBlock = data.getChosenBlock();
-        if (!canSolidifyAtCurrentPosition(p, chosenBlock)) {
-            data.setLocked(false);
-            data.resetStillTicks();
-            GameMessageUtils.sendTitle(
-                    p,
-                    msg("titles.unlocked.title", "&6UNLOCKED"),
-                    msg("titles.unlocked.subtitle", "&aKeep moving"));
-            p.sendMessage(msg("messages.game.cannot-solidify-block", "&cThis disguise cannot solidify here."));
-            return;
-        }
-
         Location anchor = getFloorAnchorLocation(p, data.getChosenBlock());
         if (anchor == null) {
             data.setLocked(false);
@@ -522,10 +532,10 @@ public class GameManager {
         p.setAllowFlight(false);
         p.setFlying(false);
         p.setGravity(false);
-        double yOffset = HiderData.requiresVerticalSpace(chosenBlock) ? 2.001 : 1.001;
-        Location lockTp = anchor.clone().add(0.0, yOffset, 0.0);
+        Location lockTp = resolveLockedPlayerLocation(anchor, p, chosenBlock);
         lockTp.setYaw(p.getLocation().getYaw());
         lockTp.setPitch(p.getLocation().getPitch());
+        data.setLockedPlayerLocation(lockTp);
         p.teleport(lockTp);
         lockedMovementGraceUntil.put(p.getUniqueId(), System.currentTimeMillis() + LOCKED_HIDER_MOVEMENT_GRACE_MS);
         hideHiderFromSeekers(p);
@@ -537,40 +547,6 @@ public class GameManager {
                 ? chosen.createBlockData().getSoundGroup().getPlaceSound()
                 : Sound.BLOCK_STONE_PLACE;
         p.playSound(p.getLocation(), placeSound, 1f, 1f);
-    }
-
-    private boolean canSolidifyAtCurrentPosition(Player player, Material material) {
-        if (material == null || !material.isBlock() || material.isAir())
-            return false;
-        if (player == null || player.getWorld() == null)
-            return false;
-
-        Location loc = player.getLocation();
-        int x = loc.getBlockX();
-        int y = loc.getBlockY();
-        int z = loc.getBlockZ();
-        World world = player.getWorld();
-
-        // Prevent solidifying while standing inside any occupied block space.
-        if (!isValidAnchorSpace(world.getBlockAt(x, y, z).getType(), material))
-            return false;
-
-        boolean needsVerticalSpace = HiderData.requiresVerticalSpace(material);
-        if (needsVerticalSpace && !isValidAnchorSpace(world.getBlockAt(x, y + 1, z).getType(), material))
-            return false;
-
-        HiderData.HorizontalOffset horizontalOffset = HiderData.horizontalOffset(material, player);
-        if (horizontalOffset.x() != 0 || horizontalOffset.z() != 0) {
-            int hx = x + horizontalOffset.x();
-            int hz = z + horizontalOffset.z();
-
-            if (!isValidAnchorSpace(world.getBlockAt(hx, y, hz).getType(), material))
-                return false;
-            if (needsVerticalSpace && !isValidAnchorSpace(world.getBlockAt(hx, y + 1, hz).getType(), material))
-                return false;
-        }
-
-        return true;
     }
 
     private Location getFloorAnchorLocation(Player p, Material chosenBlock) {
@@ -617,7 +593,30 @@ public class GameManager {
             return null;
         }
 
+        int anchorY = floorY + 1;
+        if (hasNarrowCollisionAdjacent(world, x, anchorY, z))
+            return null;
+        if (needsVerticalSpace && hasNarrowCollisionAdjacent(world, x, anchorY + 1, z))
+            return null;
+
         return new Location(world, x + 0.5, floorY + 1.0, z + 0.5);
+    }
+
+    private boolean hasNarrowCollisionAdjacent(World world, int x, int y, int z) {
+        return isNarrowCollisionBlock(world.getBlockAt(x + 1, y, z).getType())
+                || isNarrowCollisionBlock(world.getBlockAt(x - 1, y, z).getType())
+                || isNarrowCollisionBlock(world.getBlockAt(x, y, z + 1).getType())
+                || isNarrowCollisionBlock(world.getBlockAt(x, y, z - 1).getType());
+    }
+
+    private boolean isNarrowCollisionBlock(Material material) {
+        if (material == null)
+            return false;
+
+        return material == Material.IRON_BARS
+                || isPaneFamily(material)
+                || Tag.WALLS.isTagged(material)
+                || isFenceFamily(material);
     }
 
     private boolean isValidAnchorSpace(Material mat, Material chosenBlock) {
@@ -665,8 +664,57 @@ public class GameManager {
         return material == Material.GLASS_PANE || material.name().endsWith("_PANE");
     }
 
+    private Location resolveLockedPlayerLocation(Location anchor, Player player, Material chosenBlock) {
+        Location defaultLocation = anchor.clone().add(0.0, 1.001, 0.0);
+        if (chosenBlock == null || player == null || anchor.getWorld() == null)
+            return defaultLocation;
+        if (!Tag.DOORS.isTagged(chosenBlock))
+            return defaultLocation;
+
+        BlockFace doorFront = resolveHorizontalFace(player.getLocation().getYaw());
+        BlockFace behind = doorFront.getOppositeFace();
+
+        Location behindLocation = anchor.clone().add(
+                behind.getModX() * 0.62,
+                0.001,
+                behind.getModZ() * 0.62);
+        if (isPlayerSpaceFree(behindLocation)) {
+            return behindLocation;
+        }
+
+        return defaultLocation;
+    }
+
+    private BlockFace resolveHorizontalFace(float yaw) {
+        int quadrant = Math.floorMod(Math.round(yaw / 90f), 4);
+        return switch (quadrant) {
+            case 0 -> BlockFace.SOUTH;
+            case 1 -> BlockFace.WEST;
+            case 2 -> BlockFace.NORTH;
+            default -> BlockFace.EAST;
+        };
+    }
+
+    private boolean isPlayerSpaceFree(Location feetLocation) {
+        if (feetLocation == null || feetLocation.getWorld() == null)
+            return false;
+
+        World world = feetLocation.getWorld();
+        Material feet = world.getBlockAt(feetLocation).getType();
+        Material head = world.getBlockAt(feetLocation.clone().add(0, 1, 0)).getType();
+        return isPassableForPlayer(feet) && isPassableForPlayer(head);
+    }
+
+    private boolean isPassableForPlayer(Material material) {
+        if (material == null)
+            return false;
+        return material.isAir() || !material.isSolid();
+    }
+
     private boolean isValidFloorBlock(Material mat) {
         if (!mat.isSolid() || mat.isAir())
+            return false;
+        if (Tag.PRESSURE_PLATES.isTagged(mat) || Tag.BUTTONS.isTagged(mat) || mat == Material.LEVER)
             return false;
 
         // Reject multi-block structures and problematic materials
@@ -748,7 +796,7 @@ public class GameManager {
         }
 
         data.spawnDisplay(p);
-        showHiderToSeekers(p);
+        hideHiderFromSeekers(p);
         GameMessageUtils.sendTitle(p, msg("titles.unlocked.title", "&eUNLOCKED"),
                 msg("titles.unlocked.subtitle", "&aKeep moving"));
     }
@@ -827,6 +875,7 @@ public class GameManager {
         target.setHp(target.getHp() - 1);
         Player hider = Bukkit.getPlayer(targetUUID);
         if (hider != null) {
+            tagHiderCombat(hider);
             hider.playSound(hider.getLocation(), Sound.ENTITY_PLAYER_HURT, 1f, 1f);
             hider.sendMessage(msg("messages.game.hider-hit", "&cYou were hit! HP: {hp}", Map.of("hp", target.getHp())));
         }
@@ -846,6 +895,7 @@ public class GameManager {
         lastLocations.remove(uid);
         seekers.add(uid);
         lockedMovementGraceUntil.remove(uid);
+        hiderCombatTagUntil.remove(uid);
 
         Player hider = Bukkit.getPlayer(uid);
         if (hider != null) {
@@ -868,7 +918,7 @@ public class GameManager {
                         selectedArena.seekerSpawns);
             }
             giveSeekerVisualWeapon(hider);
-            hideLockedHidersFromSeeker(hider);
+                hideAllHidersFromSeeker(hider);
             GameMessageUtils.sendTitle(hider, msg("titles.found.title", "&cYou Were Found"),
                     msg("titles.found.subtitle", "&eYou are now a seeker"));
             hider.playSound(hider.getLocation(), Sound.ENTITY_PLAYER_DEATH, 1f, 1f);
@@ -935,6 +985,7 @@ public class GameManager {
         lastLocations.clear();
         frozenSeekers.clear();
         lockedMovementGraceUntil.clear();
+        hiderCombatTagUntil.clear();
         blockSelectionMenuPlayers.clear();
         seekerGraceCountdown = 0;
         gameSecondsRemaining = 0;
@@ -996,6 +1047,7 @@ public class GameManager {
         queuedPlayers.remove(p.getUniqueId());
         frozenSeekers.remove(p.getUniqueId());
         lockedMovementGraceUntil.remove(p.getUniqueId());
+        hiderCombatTagUntil.remove(p.getUniqueId());
         blockSelectionMenuPlayers.remove(p.getUniqueId());
         removeHiderMenuItem(p);
         removePlayerFromCollisionTeams(p);
@@ -1100,19 +1152,16 @@ public class GameManager {
         }
     }
 
-    private void hideLockedHidersFromSeeker(Player seeker) {
+    private void hideAllHidersFromSeeker(Player seeker) {
         if (seeker == null)
             return;
 
-        for (Map.Entry<UUID, HiderData> entry : hiders.entrySet()) {
-            if (!entry.getValue().isLocked())
+        for (UUID hiderId : hiders.keySet()) {
+            Player hider = Bukkit.getPlayer(hiderId);
+            if (hider == null || !hider.isOnline())
                 continue;
 
-            Player lockedHider = Bukkit.getPlayer(entry.getKey());
-            if (lockedHider == null || !lockedHider.isOnline())
-                continue;
-
-            seeker.hidePlayer(plugin, lockedHider);
+            seeker.hidePlayer(plugin, hider);
         }
     }
 
@@ -1315,6 +1364,8 @@ public class GameManager {
             return false;
         if (forceAllowDisguiseBlocks.contains(mat))
             return true;
+        if (isPaneFamily(mat))
+            return false;
         if (blockedDisguiseBlocks.contains(mat))
             return false;
         if (!mat.isSolid() && !allowedNonSolidDisguiseBlocks.contains(mat))
@@ -1407,7 +1458,7 @@ public class GameManager {
         ItemStack item = new ItemStack(Material.WOODEN_SWORD);
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
-            meta.setDisplayName("§6Seeker Sword");
+            meta.displayName(Component.text("§6Seeker Sword"));
             meta.setUnbreakable(true);
             meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_UNBREAKABLE);
             item.setItemMeta(meta);
@@ -1421,11 +1472,23 @@ public class GameManager {
             return false;
 
         ItemMeta meta = item.getItemMeta();
-        return meta != null && SEEKER_WEAPON_NAME.equals(meta.getDisplayName()) && meta.isUnbreakable();
+        return meta != null && matchesItemDisplayName(meta, SEEKER_WEAPON_NAME) && meta.isUnbreakable();
     }
 
     public boolean isLockedSeekerWeapon(ItemStack item) {
         return isSeekerVisualWeapon(item);
+    }
+
+    public boolean isLockedHiderMenuItem(ItemStack item) {
+        return isHiderMenuItem(item);
+    }
+
+    public int getHiderMenuSlot() {
+        return HIDER_MENU_SLOT;
+    }
+
+    public boolean isActiveRound() {
+        return state == State.HIDING_PHASE || state == State.SEEKING_PHASE;
     }
 
     private List<Player> getQueuedOnlinePlayers() {
@@ -1450,33 +1513,52 @@ public class GameManager {
     private void assignRandomBlock(Player p) {
         List<Material> pool = currentArenaBlockPool.isEmpty() ? defaultHiderBlocks : currentArenaBlockPool;
         Material chosen = pool.get(ThreadLocalRandom.current().nextInt(pool.size()));
-        setHiderBlock(p, chosen);
-        p.sendMessage(
-                msg("messages.game.random-disguise", "&aRandom disguise: {block}", Map.of("block", chosen.name())));
+        if (setHiderBlockInternal(p, chosen, false)) {
+            p.sendMessage(msg("messages.game.random-disguise", "&aRandom disguise: {block}",
+                    Map.of("block", chosen.name())));
+        }
     }
 
     public void setHiderBlock(Player p, Material block) {
+        setHiderBlockInternal(p, block, true);
+    }
+
+    private boolean setHiderBlockInternal(Player p, Material block, boolean sendDisguisedAsMessage) {
+        if (p == null)
+            return false;
+
         HiderData data = hiders.get(p.getUniqueId());
         if (data == null)
-            return;
+            return false;
+        if (isHiderCombatTagged(p)) {
+            p.sendMessage(msg(
+                    "messages.game.block-change-locked-combat-tag",
+                    "&cYou were recently hit. Wait {seconds}s before changing disguise.",
+                    Map.of("seconds", getHiderCombatTagSecondsRemaining(p))));
+            return false;
+        }
         if (isFinalMinuteBlockSwapLocked()) {
             p.sendMessage(msg(
                     "messages.game.block-change-locked-final-minute",
                     "&cYou cannot change disguise blocks in the final minute."));
-            return;
+            return false;
         }
         if (data.isLocked()) {
             p.sendMessage(msg("messages.game.unlock-first", "&cUnlock first by moving!"));
-            return;
+            return false;
         }
         if (!isAllowedPropMaterial(block)) {
             p.sendMessage(msg("messages.game.invalid-disguise", "&cThat block cannot be used as a disguise."));
-            return;
+            return false;
         }
         data.setChosenBlock(block);
         data.clearDisguise();
         data.spawnDisplay(p);
-        p.sendMessage(msg("messages.game.disguised-as", "&aDisguised as {block}!", Map.of("block", block.name())));
+
+        if (sendDisguisedAsMessage) {
+            p.sendMessage(msg("messages.game.disguised-as", "&aDisguised as {block}!", Map.of("block", block.name())));
+        }
+        return true;
     }
 
     public boolean openHiderBlockSelectionMenu(Player player) {
@@ -1494,6 +1576,14 @@ public class GameManager {
             return false;
         }
 
+        if (isHiderCombatTagged(player)) {
+            player.sendMessage(msg(
+                    "messages.game.block-change-locked-combat-tag",
+                    "&cYou were recently hit. Wait {seconds}s before changing disguise.",
+                    Map.of("seconds", getHiderCombatTagSecondsRemaining(player))));
+            return false;
+        }
+
         if (isFinalMinuteBlockSwapLocked()) {
             player.sendMessage(msg(
                     "messages.game.block-change-locked-final-minute",
@@ -1501,7 +1591,6 @@ public class GameManager {
             return false;
         }
 
-        player.sendMessage(msg("messages.command.changing-disguise", "&eChanging disguise block..."));
         blockSelectGUI.open(player);
         return true;
     }
@@ -1511,7 +1600,19 @@ public class GameManager {
             return false;
 
         ItemMeta meta = item.getItemMeta();
-        return meta != null && HIDER_MENU_ITEM_NAME.equals(meta.getDisplayName());
+        return meta != null && matchesItemDisplayName(meta, HIDER_MENU_ITEM_NAME);
+    }
+
+    private boolean matchesItemDisplayName(ItemMeta meta, String expectedName) {
+        if (meta == null || expectedName == null)
+            return false;
+
+        Component displayName = meta.displayName();
+        if (displayName == null)
+            return false;
+
+        String plain = PlainTextComponentSerializer.plainText().serialize(displayName);
+        return expectedName.equals(plain);
     }
 
     private boolean isFinalMinuteBlockSwapLocked() {
@@ -1548,11 +1649,46 @@ public class GameManager {
         }
     }
 
+    private void tagHiderCombat(Player hider) {
+        if (hider == null || hiderCombatTagSeconds <= 0)
+            return;
+
+        long until = System.currentTimeMillis() + hiderCombatTagSeconds * 1000L;
+        hiderCombatTagUntil.put(hider.getUniqueId(), until);
+        hideHiderFromSeekers(hider);
+    }
+
+    private boolean isHiderCombatTagged(Player hider) {
+        if (hider == null)
+            return false;
+
+        Long until = hiderCombatTagUntil.get(hider.getUniqueId());
+        if (until == null)
+            return false;
+        if (System.currentTimeMillis() <= until)
+            return true;
+
+        hiderCombatTagUntil.remove(hider.getUniqueId());
+        return false;
+    }
+
+    private int getHiderCombatTagSecondsRemaining(Player hider) {
+        if (hider == null)
+            return 0;
+
+        Long until = hiderCombatTagUntil.get(hider.getUniqueId());
+        if (until == null)
+            return 0;
+
+        long millisRemaining = Math.max(0L, until - System.currentTimeMillis());
+        return (int) Math.ceil(millisRemaining / 1000.0);
+    }
+
     private ItemStack createHiderMenuItem() {
         ItemStack item = new ItemStack(Material.COMPASS);
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
-            meta.setDisplayName(HIDER_MENU_ITEM_NAME);
+            meta.displayName(Component.text(HIDER_MENU_ITEM_NAME));
             meta.setUnbreakable(true);
             meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_UNBREAKABLE);
             item.setItemMeta(meta);
@@ -1595,12 +1731,8 @@ public class GameManager {
         if (player.getOpenInventory() == null)
             return false;
 
-        String title = player.getOpenInventory().getTitle();
-        if (title == null)
-            return false;
-
-        String plain = ChatColor.stripColor(title);
-        return plain != null && plain.startsWith("Pick Your Block");
+        String plain = PlainTextComponentSerializer.plainText().serialize(player.getOpenInventory().title());
+        return plain.startsWith("Pick Your Block");
     }
 
     public void setBlockSelectionMenuOpen(Player player, boolean open) {
@@ -1663,7 +1795,8 @@ public class GameManager {
             if (chosenBlock == null)
                 continue;
 
-            remainingCounts.merge(chosenBlock, 1, Integer::sum);
+                remainingCounts.merge(chosenBlock, 1,
+                    (existing, increment) -> (existing == null ? 0 : existing) + (increment == null ? 0 : increment));
         }
 
         GameMessageUtils.sendPrefixedChat(seekers, msg("messages.prefix", "&6[PropHunt] &r"), msg(
@@ -1710,6 +1843,7 @@ public class GameManager {
                 1);
         playersPerSeeker = GameConfigReader.intSetting(config, "gameplay.players-per-seeker", null, 3, 1);
         seekerHitCooldownTicks = GameConfigReader.intSetting(config, "gameplay.seeker-hit-cooldown-ticks", null, 4, 0);
+        hiderCombatTagSeconds = GameConfigReader.intSetting(config, "gameplay.hider-combat-tag-seconds", null, 6, 0);
         freezeBlindnessBufferSeconds = GameConfigReader.intSetting(config, "gameplay.freeze-blindness-buffer-seconds",
                 null, 5, 0);
         countdownTitleThresholdSeconds = GameConfigReader.intSetting(config,

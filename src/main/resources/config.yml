@@ -29,6 +29,10 @@ gameplay:
     # Cooldown applied to seeker hits to avoid duplicate hit events.
     seeker-hit-cooldown-ticks: 4
 
+    # Seconds hiders are combat-tagged after being hit. While tagged,
+    # they are hidden from seekers and cannot change disguise blocks.
+    hider-combat-tag-seconds: 6
+
     # Extra blindness seconds added to seekers while frozen so the effect does not expire early.
     freeze-blindness-buffer-seconds: 5
 
@@ -260,6 +264,7 @@ messages:
         round-start: "<gradient:#FDE68A:#F97316>=== PropHunt Started on Arena: {arena} ===</gradient>"
         round-start-block-pool: "&#86EFACHiders are assigned random map blocks from this arena."
         seeker-release-delay: "&#FB7185Seekers: releasing in {seconds} seconds!"
+        seekers-list: "&#FB7185Seekers this round: &f{seekers}"
         seekers-released: "<gradient:#F97316:#EF4444>Seekers RELEASED! Find the props!</gradient>"
         time-remaining: "&#FDE68A{time} remaining!"
         final-minute-blocks-header: "&#F59E0BOne minute left! &#FDE68ARemaining hider blocks:"
@@ -276,6 +281,7 @@ messages:
         cannot-solidify-block: "&cYou cannot solidify while standing in occupied space."
         cannot-solidify-floor: "&cYou cannot solidify on this surface."
         block-change-locked-final-minute: "&cYou cannot change disguise blocks in the final minute."
+        block-change-locked-combat-tag: "&cYou were recently hit. Wait {seconds}s before changing disguise."
         invalid-disguise: "&cThat block cannot be used as a disguise."
         disguised-as: "&aDisguised as {block}!"
 
