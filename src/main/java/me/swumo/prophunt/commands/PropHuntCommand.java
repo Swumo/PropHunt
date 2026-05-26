@@ -3,6 +3,7 @@ package me.swumo.prophunt.commands;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import me.swumo.prophunt.PropHunt;
 import me.swumo.prophunt.game.GameManager;
+import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.incendo.cloud.annotation.specifier.Greedy;
@@ -161,6 +162,22 @@ public class PropHuntCommand {
                 java.util.Map.of("count", gm.getQueueSize(), "open", gm.isQueueOpen() ? "open" : "closed")));
     }
 
+    @Command("prophunt|ph forceseeker <player>")
+    @CommandDescription("Mark a queued player as seeker for the next round.")
+    @Permission("prophunt.admin")
+    public void forceSeeker(CommandSourceStack stack,
+            @Argument(value = "player", suggestions = "queued_players") String playerName) {
+        Player target = resolveOnlinePlayer(playerName);
+        if (target == null) {
+            stack.getSender().sendMessage(plugin.getCommandConfigText(
+                    "messages.command.player-not-found",
+                    "&cPlayer not found: {player}",
+                    java.util.Map.of("player", playerName)));
+            return;
+        }
+        plugin.getGameManager().forceAssignSeeker(stack.getSender(), target);
+    }
+
     @Command("prophunt|ph arena create <name>")
     @CommandDescription("Create a new arena.")
     @Permission("prophunt.admin")
@@ -253,5 +270,18 @@ public class PropHuntCommand {
     @Suggestions("arena_names")
     public Stream<String> suggestArenaNames() {
         return plugin.getGameManager().getArenaNames().stream().sorted();
+    }
+
+    @Suggestions("queued_players")
+    public Stream<String> suggestQueuedPlayers() {
+        return plugin.getGameManager().getQueuedPlayerNames().stream();
+    }
+
+    private Player resolveOnlinePlayer(String playerName) {
+        Player exact = Bukkit.getPlayerExact(playerName);
+        if (exact != null) {
+            return exact;
+        }
+        return Bukkit.getPlayer(playerName);
     }
 }

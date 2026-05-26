@@ -9,6 +9,9 @@ import me.swumo.prophunt.platform.PlatformScheduler;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
+import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.incendo.cloud.annotations.AnnotationParser;
 import org.incendo.cloud.execution.ExecutionCoordinator;
@@ -16,6 +19,11 @@ import org.incendo.cloud.minecraft.extras.MinecraftHelp;
 import org.incendo.cloud.paper.PaperCommandManager;
 import xyz.xenondevs.invui.InvUI;
 
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -27,11 +35,15 @@ public class PropHunt extends JavaPlugin {
     @Getter private static PropHunt instance;
     @Getter private GameManager gameManager;
     @Getter private PlatformScheduler platformScheduler;
+    private File arenaConfigFile;
+    private FileConfiguration arenaConfig;
 
     @Override
     public void onEnable() {
         instance = this;
         saveDefaultConfig();
+        mergeMissingConfigDefaults();
+        setupArenaConfig();
         platformScheduler = new PlatformScheduler(this);
         getLogger().info("Detected platform: " + (platformScheduler.isFolia() ? "Folia" : "Paper"));
         InvUI.getInstance().setPlugin(this);
@@ -63,8 +75,111 @@ public class PropHunt extends JavaPlugin {
 
     public void reloadPluginConfig() {
         reloadConfig();
+        mergeMissingConfigDefaults();
+        reloadArenaConfig();
+        mergeMissingArenaDefaults();
         if (gameManager != null)
             gameManager.reloadFromConfig();
+    }
+
+    public FileConfiguration getArenaConfig() {
+        if (arenaConfig == null) {
+            reloadArenaConfig();
+        }
+        return arenaConfig;
+    }
+
+    public void saveArenaConfig() {
+        if (arenaConfig == null || arenaConfigFile == null)
+            return;
+
+        try {
+            arenaConfig.save(arenaConfigFile);
+        } catch (IOException exception) {
+            getLogger().severe("Failed to save arenas.yml: " + exception.getMessage());
+        }
+    }
+
+    public void reloadArenaConfig() {
+        if (arenaConfigFile == null) {
+            arenaConfigFile = new File(getDataFolder(), "arenas.yml");
+        }
+
+        arenaConfig = YamlConfiguration.loadConfiguration(arenaConfigFile);
+        if (!arenaConfig.isConfigurationSection("arenas")) {
+            arenaConfig.createSection("arenas");
+        }
+    }
+
+    private void setupArenaConfig() {
+        if (!getDataFolder().exists()) {
+            getDataFolder().mkdirs();
+        }
+
+        arenaConfigFile = new File(getDataFolder(), "arenas.yml");
+        if (!arenaConfigFile.exists()) {
+            saveResource("arenas.yml", false);
+        }
+
+        reloadArenaConfig();
+        mergeMissingArenaDefaults();
+        migrateLegacyArenaConfig();
+        saveArenaConfig();
+    }
+
+    private void mergeMissingConfigDefaults() {
+        mergeMissingFromResource("config.yml", getConfig(), this::saveConfig);
+    }
+
+    private void mergeMissingArenaDefaults() {
+        mergeMissingFromResource("arenas.yml", getArenaConfig(), this::saveArenaConfig);
+    }
+
+    private void mergeMissingFromResource(String resourceName, FileConfiguration targetConfig, Runnable saveAction) {
+        if (targetConfig == null || saveAction == null)
+            return;
+
+        try (InputStream input = getResource(resourceName)) {
+            if (input == null)
+                return;
+
+            YamlConfiguration defaults = YamlConfiguration.loadConfiguration(
+                    new InputStreamReader(input, StandardCharsets.UTF_8));
+            boolean changed = false;
+            for (String path : defaults.getKeys(true)) {
+                if (defaults.isConfigurationSection(path))
+                    continue;
+                if (!targetConfig.isSet(path)) {
+                    targetConfig.set(path, defaults.get(path));
+                    changed = true;
+                }
+            }
+
+            if (changed) {
+                saveAction.run();
+                getLogger().info("Added missing config entries to " + resourceName);
+            }
+        } catch (Exception exception) {
+            getLogger().warning("Failed to merge missing defaults from " + resourceName + ": " + exception.getMessage());
+        }
+    }
+
+    private void migrateLegacyArenaConfig() {
+        if (arenaConfig == null)
+            return;
+
+        if (arenaConfig.isConfigurationSection("arenas") && !arenaConfig.getConfigurationSection("arenas").getKeys(false).isEmpty()) {
+            return;
+        }
+
+        ConfigurationSection legacyArenas = getConfig().getConfigurationSection("arenas");
+        if (legacyArenas == null)
+            return;
+
+        arenaConfig.set("arenas", legacyArenas.getValues(true));
+        getConfig().set("arenas", null);
+        saveConfig();
+        getLogger().info("Migrated arena data from config.yml to arenas.yml");
     }
 
     public String getConfigText(String path, String fallback) {

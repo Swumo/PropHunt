@@ -220,6 +220,12 @@ messages:
         status-hiders: "&aHiders: {count}"
         status-seekers: "&cSeekers: {count}"
         status-queue: "&eQueue: {count} ({open})"
+        player-not-found: "&cPlayer not found: {player}"
+        force-seeker-pre-game-only: "&cThis command can only be used before the game starts."
+        force-seeker-not-in-queue: "&c{player} is not in the queue."
+        force-seeker-already: "&e{player} is already marked as a seeker."
+        force-seeker-queued: "&aMarked {player} as a seeker for the next round."
+        force-seeker-target-queued: "&eAn admin marked you as a seeker for the next round."
         arena-usage: "&eUsage: /prophunt arena <create|remove|pos1|pos2|addhiderspawn|addseekerspawn|list|info> ..."
         arena-create-usage: "&cUsage: /prophunt arena create <name>"
         arena-remove-usage: "&cUsage: /prophunt arena remove <name>"
@@ -309,17 +315,4 @@ messages:
         not-in-queue: "&cYou are not in the queue."
 
 # Legacy top-level gameplay keys are still read as fallbacks for older configs.
-# Arena data is written by commands under this section.
-# Example setup flow:
-# /prophunt arena create arena1
-# /prophunt arena pos1 arena1
-# /prophunt arena pos2 arena1
-# /prophunt arena addhiderspawn arena1
-# /prophunt arena addseekerspawn arena1
-# arenas:
-#   arena1:
-#     world: world
-#     pos1: {x: 0, y: 64, z: 0, yaw: 0, pitch: 0}
-#     pos2: {x: 50, y: 90, z: 50, yaw: 0, pitch: 0}
-#     hider-spawns: []
-#     seeker-spawns: []
+# Arena data is now stored in arenas.yml.
