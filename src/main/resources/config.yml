@@ -30,7 +30,7 @@ gameplay:
     seeker-hit-cooldown-ticks: 4
 
     # Seconds hiders are combat-tagged after being hit. While tagged,
-    # they are hidden from seekers and cannot change disguise blocks.
+    # they cannot change their disguise block.
     hider-combat-tag-seconds: 6
 
     # Extra blindness seconds added to seekers while frozen so the effect does not expire early.
@@ -43,6 +43,14 @@ gameplay:
     round-warning-seconds:
         - 300
         - 60
+
+    # What happens to a hider when they are found.
+    # convert - the hider joins the seekers (default)
+    # spectate - the hider spectates the rest of the round
+    on-hider-death: convert
+
+    # Whether seekers glow red so hiders can see them through walls.
+    seeker-glow: true
 
     # Main deny list used by disguise validation.
     # This includes the blocks that were previously hardcoded in GameManager.

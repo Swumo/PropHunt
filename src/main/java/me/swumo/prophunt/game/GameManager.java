@@ -47,12 +47,19 @@ public class GameManager {
         WAITING, HIDING_PHASE, SEEKING_PHASE, END
     }
 
+    public enum OnDeathMode {
+        CONVERT_TO_SEEKER, SPECTATE
+    }
+
     private final PropHunt plugin;
     private final BlockSelectGUI blockSelectGUI;
     @Getter
     private State state = State.WAITING;
     private final Map<UUID, HiderData> hiders = new HashMap<>();
     private final Set<UUID> seekers = new HashSet<>();
+    private final Set<UUID> spectators = new HashSet<>();
+    private OnDeathMode onDeathMode = OnDeathMode.CONVERT_TO_SEEKER;
+    private boolean seekerGlowEnabled = true;
     private final Map<UUID, Location> lastLocations = new HashMap<>();
     private final Map<UUID, Location> frozenSeekers = new HashMap<>();
     private final Map<UUID, Long> lockedMovementGraceUntil = new HashMap<>();
@@ -367,7 +374,7 @@ public class GameManager {
                 endGame(true);
             } else if (gameSecondsRemaining == 60) {
                 messageRemainingBlocksToSeekers();
-                GameMessageUtils.sendPrefixedChat(participants, prefix, msg(
+                GameMessageUtils.sendPrefixedChat(allParticipantIds(), prefix, msg(
                         "messages.game.time-remaining",
                         "&e{time} remaining!",
                         Map.of("time", GameFormatUtils.formatRemainingTime(gameSecondsRemaining), "seconds",
@@ -375,7 +382,7 @@ public class GameManager {
             } else if (gameSecondsRemaining == 30
                     || (gameSecondsRemaining <= 10)
                     || roundWarningSeconds.contains(gameSecondsRemaining)) {
-                GameMessageUtils.sendPrefixedChat(participants, prefix, msg(
+                GameMessageUtils.sendPrefixedChat(allParticipantIds(), prefix, msg(
                         "messages.game.time-remaining",
                         "&e{time} remaining!",
                         Map.of("time", GameFormatUtils.formatRemainingTime(gameSecondsRemaining), "seconds",
@@ -850,25 +857,51 @@ public class GameManager {
     }
 
     private void killHider(UUID uid, Player seeker) {
-        HiderData data = promoteHiderToSeeker(uid);
-        if (data == null)
-            return;
-
         Player hider = Bukkit.getPlayer(uid);
-        if (hider != null) {
-            applyPromotedSeekerLoadoutAndVisibility(hider);
-            GameMessageUtils.sendTitle(hider, msg("titles.found.title", "&cYou Were Found"),
-                    msg("titles.found.subtitle", "&eYou are now a seeker"));
-            hider.playSound(hider.getLocation(), Sound.ENTITY_PLAYER_DEATH, 1f, 1f);
+        String hiderName = hider != null ? hider.getName() : "A hider";
+
+        if (onDeathMode == OnDeathMode.SPECTATE) {
+            HiderData data = removePlayerFromHiderTeam(uid);
+            if (data == null)
+                return;
+
+            data.clearDisguise();
+            clearHiderTrackingState(uid);
+            spectators.add(uid);
+
+            if (hider != null) {
+                removeHiderMenuItem(hider);
+                removePlayerFromCollisionTeams(hider);
+                showHiderToSeekers(hider);
+                hider.setInvisible(false);
+                hider.setWorldBorder(null);
+                hider.setGameMode(GameMode.SPECTATOR);
+                GameMessageUtils.sendTitle(hider,
+                        msg("titles.found.title", "&cYou Were Found"),
+                        msg("titles.found-spectate.subtitle", "&eYou are now spectating"));
+                hider.playSound(hider.getLocation(), Sound.ENTITY_PLAYER_DEATH, 1f, 1f);
+            }
+        } else {
+            HiderData data = promoteHiderToSeeker(uid);
+            if (data == null)
+                return;
+
+            if (hider != null) {
+                applyPromotedSeekerLoadoutAndVisibility(hider);
+                GameMessageUtils.sendTitle(hider,
+                        msg("titles.found.title", "&cYou Were Found"),
+                        msg("titles.found.subtitle", "&eYou are now a seeker"));
+                hider.playSound(hider.getLocation(), Sound.ENTITY_PLAYER_DEATH, 1f, 1f);
+            }
         }
 
         GameMessageUtils.sendPrefixedChat(
-                GameMessageUtils.matchRecipients(hiders.keySet(), seekers),
+                allParticipantIds(),
                 msg("messages.prefix", "&6[PropHunt] &r"),
                 msg(
                         "messages.game.found-broadcast",
                         "&c{hider} was found by {seeker}!",
-                        Map.of("hider", hider != null ? hider.getName() : "A hider", "seeker", seeker.getName())));
+                        Map.of("hider", hiderName, "seeker", seeker.getName())));
         if (hiders.isEmpty())
             endGame(false);
     }
@@ -886,7 +919,7 @@ public class GameManager {
             gameTimerTask.cancel();
 
         unfreezeAllSeekers();
-        Set<UUID> participantsAndAdmins = GameMessageUtils.matchAndAdminRecipients(hiders.keySet(), seekers,
+        Set<UUID> participantsAndAdmins = GameMessageUtils.matchAndAdminRecipients(allParticipantIds(), Collections.emptySet(),
             "prophunt.admin");
         String winMessage = hidersWin
             ? msg("messages.game.hiders-win", "&aHIDERS WIN")
@@ -920,6 +953,13 @@ public class GameManager {
                 resetPlayerAfterGame(p, GameMode.ADVENTURE);
             }
         }
+        for (UUID uid : spectators) {
+            Player p = Bukkit.getPlayer(uid);
+            if (p != null) {
+                removePlayerFromCollisionTeams(p);
+                resetPlayerAfterGame(p, GameMode.ADVENTURE);
+            }
+        }
 
         cleanup();
         plugin.getPlatformScheduler().runGlobalLater(() -> state = State.WAITING, 100L);
@@ -929,6 +969,7 @@ public class GameManager {
         WorldBorderUtils.clearWorldBorders(GameMessageUtils.matchRecipients(hiders.keySet(), seekers));
         hiders.clear();
         seekers.clear();
+        spectators.clear();
         lastLocations.clear();
         frozenSeekers.clear();
         lockedMovementGraceUntil.clear();
@@ -952,7 +993,7 @@ public class GameManager {
         if (gameTimerTask != null)
             gameTimerTask.cancel();
 
-        Set<UUID> participants = GameMessageUtils.matchRecipients(hiders.keySet(), seekers);
+        Set<UUID> participants = allParticipantIds();
 
         unfreezeAllSeekers();
         for (HiderData d : hiders.values())
@@ -978,6 +1019,14 @@ public class GameManager {
             }
         }
 
+        for (UUID uid : spectators) {
+            Player p = Bukkit.getPlayer(uid);
+            if (p != null) {
+                removePlayerFromCollisionTeams(p);
+                resetPlayerAfterGame(p, GameMode.SURVIVAL);
+            }
+        }
+
         GameMessageUtils.sendPrefixedChat(
                 participants,
                 msg("messages.prefix", "&6[PropHunt] &r"),
@@ -998,9 +1047,11 @@ public class GameManager {
         lockedMovementGraceUntil.remove(p.getUniqueId());
         hiderCombatTagUntil.remove(p.getUniqueId());
         blockSelectionMenuPlayers.remove(p.getUniqueId());
+        spectators.remove(p.getUniqueId());
         removeHiderMenuItem(p);
         removePlayerFromCollisionTeams(p);
         restoreSeekerVisualWeapon(p);
+        p.setGlowing(false);
         p.setWorldBorder(null);
     }
 
@@ -1012,6 +1063,8 @@ public class GameManager {
         Team seekerTeam = ensureNoCollisionTeam(SEEKER_NO_COLLISION_TEAM);
         if (hiderTeam == null || seekerTeam == null)
             return;
+
+        seekerTeam.setColor(ChatColor.RED);
 
         String entry = player.getName();
         hiderTeam.removeEntry(entry);
@@ -1059,6 +1112,7 @@ public class GameManager {
             return;
 
         player.setInvisible(false);
+        player.setGlowing(false);
         player.setGameMode(gameMode);
         player.setAllowFlight(false);
         player.setGravity(true);
@@ -1383,6 +1437,7 @@ public class GameManager {
         player.setGravity(true);
         giveSeekerVisualWeapon(player);
         assignPlayerToNoCollisionTeam(player, false);
+        if (seekerGlowEnabled) player.setGlowing(true);
         freezeSeeker(player);
         GameMessageUtils.sendTitle(player,
                 msg("titles.seeker-role.title", "&cYou are the SEEKER"),
@@ -1627,6 +1682,7 @@ public class GameManager {
         target.setGameMode(GameMode.ADVENTURE);
         target.setAllowFlight(false);
         target.setGravity(true);
+        if (seekerGlowEnabled) target.setGlowing(true);
         showHiderToSeekers(target);
         if (selectedArena != null && !selectedArena.seekerSpawns.isEmpty()) {
             teleportToRandomSpawn(target, selectedArena.seekerSpawns);
@@ -1809,7 +1865,6 @@ public class GameManager {
 
         long until = System.currentTimeMillis() + hiderCombatTagSeconds * 1000L;
         hiderCombatTagUntil.put(hider.getUniqueId(), until);
-        hideHiderFromSeekers(hider);
     }
 
     private boolean isHiderCombatTagged(Player hider) {
@@ -1928,6 +1983,24 @@ public class GameManager {
         return hiders.get(uuid);
     }
 
+    private Set<UUID> allParticipantIds() {
+        Set<UUID> all = new HashSet<>();
+        all.addAll(hiders.keySet());
+        all.addAll(seekers);
+        all.addAll(spectators);
+        return all;
+    }
+
+    public OnDeathMode getOnDeathMode() {
+        return onDeathMode;
+    }
+
+    public void setOnDeathMode(OnDeathMode mode) {
+        this.onDeathMode = mode;
+        plugin.getConfig().set("gameplay.on-hider-death", mode == OnDeathMode.SPECTATE ? "spectate" : "convert");
+        plugin.saveConfig();
+    }
+
     public boolean isWithinLockMovementGrace(Player player) {
         if (player == null)
             return false;
@@ -2037,6 +2110,9 @@ public class GameManager {
                 }
             }
         }
+        String onDeathStr = config.getString("gameplay.on-hider-death", "convert");
+        onDeathMode = "spectate".equalsIgnoreCase(onDeathStr) ? OnDeathMode.SPECTATE : OnDeathMode.CONVERT_TO_SEEKER;
+        seekerGlowEnabled = config.getBoolean("gameplay.seeker-glow", true);
     }
 
     private void adjustRunningMatch(int oldHiderMaxHp, int oldSeekerGracePeriod, int oldGameDuration) {

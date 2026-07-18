@@ -117,6 +117,30 @@ public class PropHuntCommand {
         plugin.getGameManager().startGame(stack.getSender());
     }
 
+    @Command("prophunt|ph gamemode <mode>")
+    @CommandDescription("Set what happens to hiders when found: convert (join seekers) or spectate.")
+    @Permission("prophunt.admin")
+    public void gamemode(CommandSourceStack stack,
+            @Argument(value = "mode", suggestions = "on_death_modes") String mode) {
+        GameManager gm = plugin.getGameManager();
+        GameManager.OnDeathMode parsed;
+        if ("spectate".equalsIgnoreCase(mode)) {
+            parsed = GameManager.OnDeathMode.SPECTATE;
+        } else if ("convert".equalsIgnoreCase(mode)) {
+            parsed = GameManager.OnDeathMode.CONVERT_TO_SEEKER;
+        } else {
+            stack.getSender().sendMessage(plugin.getCommandConfigText(
+                    "messages.command.invalid-gamemode",
+                    "&cInvalid mode. Options: convert, spectate"));
+            return;
+        }
+        gm.setOnDeathMode(parsed);
+        stack.getSender().sendMessage(plugin.getCommandConfigText(
+                "messages.command.gamemode-set",
+                "&aOn-death mode set to: &e{mode}",
+                java.util.Map.of("mode", mode.toLowerCase())));
+    }
+
     @Command("prophunt|ph stop")
     @CommandDescription("Stop the game.")
     @Permission("prophunt.admin")
@@ -153,6 +177,8 @@ public class PropHuntCommand {
         GameManager gm = plugin.getGameManager();
         sender.sendMessage(plugin.getCommandConfigText("messages.command.status-state", "&6State: {state}",
                 java.util.Map.of("state", gm.getState().name())));
+        sender.sendMessage(plugin.getCommandConfigText("messages.command.status-mode", "&bMode: {mode}",
+                java.util.Map.of("mode", gm.getOnDeathMode() == GameManager.OnDeathMode.SPECTATE ? "spectate" : "convert")));
         sender.sendMessage(plugin.getCommandConfigText("messages.command.status-hiders", "&aHiders: {count}",
                 java.util.Map.of("count", gm.getHiders().size())));
         sender.sendMessage(plugin.getCommandConfigText("messages.command.status-seekers", "&cSeekers: {count}",
@@ -265,6 +291,11 @@ public class PropHuntCommand {
             return;
         }
         p.sendMessage(plugin.applyCommandPrefix(plugin.getGameManager().addSeekerSpawn(p, name)));
+    }
+
+    @Suggestions("on_death_modes")
+    public Stream<String> suggestOnDeathModes() {
+        return Stream.of("convert", "spectate");
     }
 
     @Suggestions("arena_names")
