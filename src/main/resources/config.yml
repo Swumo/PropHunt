@@ -298,6 +298,9 @@ messages:
         block-change-locked-combat-tag: "&cYou were recently hit. Wait {seconds}s before changing disguise."
         invalid-disguise: "&cThat block cannot be used as a disguise."
         disguised-as: "&aDisguised as {block}!"
+        player-quit: "&e{player} &7left the game."
+        seeker-quit-all-left: "&e{player} &7left — no seekers remain. Hiders win!"
+        hider-quit-all-left: "&e{player} &7left — no hiders remain. Seekers win!"
 
     arena:
         already-exists: "&cArena already exists: {arena}"

@@ -28,6 +28,7 @@ import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scoreboard.Scoreboard;
 import org.bukkit.scoreboard.ScoreboardManager;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.scoreboard.Team;
 
 import java.util.*;
@@ -198,7 +199,7 @@ public class GameManager {
             return;
         }
 
-        boolean hasAnyCuboid = arenas.stream().anyMatch(ArenaRuntime::hasCuboid);
+        boolean hasAnyCuboid = arenas.stream().anyMatch(a -> a.hasCuboid());
         boolean hasAnyHiderSpawn = arenas.stream().anyMatch(a -> !a.hiderSpawns.isEmpty());
         boolean hasAnySeekerSpawn = arenas.stream().anyMatch(a -> !a.seekerSpawns.isEmpty());
 
@@ -255,7 +256,7 @@ public class GameManager {
         List<String> seekerNames = seekers.stream()
             .map(Bukkit::getPlayer)
             .filter(Objects::nonNull)
-            .map(Player::getName)
+            .map(p -> p.getName())
             .sorted(String.CASE_INSENSITIVE_ORDER)
             .toList();
 
@@ -1037,10 +1038,16 @@ public class GameManager {
     }
 
     public void handlePlayerQuit(Player p) {
+        boolean wasHider = hiders.containsKey(p.getUniqueId());
+        boolean wasSeeker = seekers.contains(p.getUniqueId());
+        boolean activeGame = state == State.HIDING_PHASE || state == State.SEEKING_PHASE;
+
         HiderData data = hiders.get(p.getUniqueId());
         if (data != null)
             data.clearDisguise();
 
+        hiders.remove(p.getUniqueId());
+        seekers.remove(p.getUniqueId());
         queuedPlayers.remove(p.getUniqueId());
         forcedSeekersInQueue.remove(p.getUniqueId());
         frozenSeekers.remove(p.getUniqueId());
@@ -1053,6 +1060,37 @@ public class GameManager {
         restoreSeekerVisualWeapon(p);
         p.setGlowing(false);
         p.setWorldBorder(null);
+
+        if (!activeGame || (!wasHider && !wasSeeker))
+            return;
+
+        String prefix = msg("messages.prefix", "&6[PropHunt] &r");
+        String playerName = p.getName();
+
+        if (wasSeeker && seekers.isEmpty()) {
+            GameMessageUtils.sendPrefixedChat(
+                    allParticipantIds(),
+                    prefix,
+                    msg("messages.game.seeker-quit-all-left",
+                            "&e{player} &7left — no seekers remain. Hiders win!",
+                            Map.of("player", playerName)));
+            endGame(true);
+        } else if (wasHider && hiders.isEmpty()) {
+            GameMessageUtils.sendPrefixedChat(
+                    allParticipantIds(),
+                    prefix,
+                    msg("messages.game.hider-quit-all-left",
+                            "&e{player} &7left — no hiders remain. Seekers win!",
+                            Map.of("player", playerName)));
+            endGame(false);
+        } else if (wasHider || wasSeeker) {
+            GameMessageUtils.sendPrefixedChat(
+                    allParticipantIds(),
+                    prefix,
+                    msg("messages.game.player-quit",
+                            "&e{player} &7left the game.",
+                            Map.of("player", playerName)));
+        }
     }
 
     private void assignPlayerToNoCollisionTeam(Player player, boolean hiderRole) {
@@ -1064,7 +1102,7 @@ public class GameManager {
         if (hiderTeam == null || seekerTeam == null)
             return;
 
-        seekerTeam.setColor(ChatColor.RED);
+        seekerTeam.color(NamedTextColor.RED);
 
         String entry = player.getName();
         hiderTeam.removeEntry(entry);
