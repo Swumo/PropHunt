@@ -9,6 +9,7 @@ import org.bukkit.Tag;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Interaction;
+import org.bukkit.entity.ItemFrame;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
@@ -52,6 +53,11 @@ public class GameListeners implements Listener {
         if (!(event.getDamager() instanceof Player seeker))
             return;
         Entity target = event.getEntity();
+
+        if (target instanceof ItemFrame && (gm().isHider(seeker) || gm().isSeeker(seeker))) {
+            event.setCancelled(true);
+            return;
+        }
 
         switch (target) {
             case Interaction hitbox -> {
@@ -150,6 +156,13 @@ public class GameListeners implements Listener {
     public void onPlayerInteractEntity(PlayerInteractEntityEvent event) {
         Player player = event.getPlayer();
         if (gm().isHider(player) || gm().isSeeker(player))
+            event.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onPlayerInteractAtEntity(PlayerInteractAtEntityEvent event) {
+        Player player = event.getPlayer();
+        if ((gm().isHider(player) || gm().isSeeker(player)) && event.getRightClicked() instanceof ItemFrame)
             event.setCancelled(true);
     }
 
