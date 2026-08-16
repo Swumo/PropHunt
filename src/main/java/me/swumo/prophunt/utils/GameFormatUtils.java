@@ -17,6 +17,11 @@ public final class GameFormatUtils {
         return totalSeconds + " seconds";
     }
 
+    public static String formatTimer(int totalSeconds) {
+        int safeSeconds = Math.max(0, totalSeconds);
+        return String.format("%d:%02d", safeSeconds / 60, safeSeconds % 60);
+    }
+
     public static String formatBlockName(Material material) {
         if (material == null) return "Unknown";
 

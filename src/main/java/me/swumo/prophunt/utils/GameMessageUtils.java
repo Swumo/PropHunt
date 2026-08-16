@@ -24,12 +24,13 @@ public final class GameMessageUtils {
     }
 
     public static void sendChat(Collection<UUID> recipients, String message) {
+        var component = MiniMessage.miniMessage().deserialize(message);
         for (UUID recipientId : recipients) {
             Player recipient = Bukkit.getPlayer(recipientId);
             if (recipient == null || !recipient.isOnline())
                 continue;
 
-            recipient.sendMessage(message);
+            recipient.sendMessage(component);
         }
     }
 

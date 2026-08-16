@@ -17,6 +17,15 @@ gameplay:
     # Total game duration in seconds after seekers are released
     game-duration-seconds: 300
 
+    # Remaining-time boss bar shown during the seeking phase.
+    # Colors: PINK, BLUE, RED, GREEN, YELLOW, PURPLE, WHITE.
+    # Overlays: PROGRESS, NOTCHED_6, NOTCHED_10, NOTCHED_12, NOTCHED_20.
+    timer-boss-bar:
+        enabled: true
+        title: "<gold>Time remaining:</gold> <yellow>{time}</yellow>"
+        color: YELLOW
+        overlay: PROGRESS
+
     # Maximum number of blocks sampled from the selected arena cuboid when building
     # the random hider block pool. Higher values are more accurate but heavier.
     arena-scan-max-blocks: 120000
@@ -34,6 +43,12 @@ gameplay:
     # Seconds hiders are combat-tagged after being hit. While tagged,
     # they cannot change their disguise block.
     hider-combat-tag-seconds: 6
+
+    # Namespaced Minecraft sound played to a seeker alongside the HIT confirmation.
+    seeker-hit-sound: minecraft:entity.experience_orb.pickup
+
+    # Minimum number of ticks between repeated cannot-solidify messages.
+    cannot-solidify-message-cooldown-ticks: 200
 
     # Extra blindness seconds added to seekers while frozen so the effect does not expire early.
     freeze-blindness-buffer-seconds: 5
@@ -205,6 +220,8 @@ titles:
     found:
         title: "<gradient:#FB7185:#B91C1C>You Were Found</gradient>"
         subtitle: "<color:#D1D5DB>You are now a seeker</color>"
+    found-spectate:
+        subtitle: "<color:#D1D5DB>You are now spectating</color>"
     hiders-win:
         title: "<gradient:#6EE7B7:#16A34A>HIDERS WIN</gradient>"
         subtitle: "<color:#FDE68A>Round over</color>"
@@ -213,7 +230,7 @@ titles:
         subtitle: "<color:#FDE68A>Round over</color>"
 
 messages:
-    prefix: "<gradient:#FDE68A:#F97316><bold>PropHunt</bold></gradient> <dark_gray»</dark_gray> "
+    prefix: "<gradient:#FDE68A:#F97316><bold>PropHunt</bold></gradient> <dark_gray>»</dark_gray> "
 
     errors:
         no-permission: "<red>No permission.</red>"
@@ -228,8 +245,11 @@ messages:
         changing-disguise: "<yellow>Changing disguise block...</yellow>"
         status-state: "<gold>State: {state}</gold>"
         status-hiders: "<green>Hiders: {count}</green>"
+        status-mode: "<aqua>Mode: {mode}</aqua>"
         status-seekers: "<red>Seekers: {count}</red>"
         status-queue: "<yellow>Queue: {count} ({open})</yellow>"
+        invalid-gamemode: "<red>Invalid mode. Options: convert, spectate</red>"
+        gamemode-set: "<green>On-death mode set to: </green><yellow>{mode}</yellow>"
         player-not-found: "<red>Player not found: {player}</red>"
         force-seeker-pre-game-only: "<red>This command can only be used before the game starts.</red>"
         force-seeker-not-in-queue: "<red>{player} is not in the queue.</red>"
@@ -289,7 +309,8 @@ messages:
         hider-hit: "<red>You were hit! HP: {hp}</red>"
         seeker-hit-confirm: "<yellow>HIT!</yellow>"
         must-hit-disguise-block: "<red>You must hit the disguise block, not the player.</red>"
-        found-broadcast: "<red>{hider} was found by {seeker}!</red>"
+        found-broadcast: "<red>{hider} was found by {seeker}! {remaining} hiders left.</red>"
+        force-stopped: "<red>The game was force stopped by an admin.</red>"
         hiders-win: "<gradient:#6EE7B7:#16A34A>=== HIDERS WIN! ===</gradient>"
         seekers-win: "<gradient:#FB7185:#DC2626>=== SEEKERS WIN! ===</gradient>"
         random-disguise: "<green>Random disguise: {block}</green>"

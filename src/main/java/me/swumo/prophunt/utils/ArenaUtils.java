@@ -334,9 +334,6 @@ public final class ArenaUtils {
 
         for (int chunkX = Math.floorDiv(minX, 16); chunkX <= Math.floorDiv(maxX, 16) && !stop; chunkX++) {
             for (int chunkZ = Math.floorDiv(minZ, 16); chunkZ <= Math.floorDiv(maxZ, 16) && !stop; chunkZ++) {
-                if (!world.isChunkLoaded(chunkX, chunkZ))
-                    continue;
-
                 ChunkSnapshot chunk = world.getChunkAt(chunkX, chunkZ).getChunkSnapshot();
                 int chunkMinX = chunkX * 16;
                 int chunkMaxX = chunkMinX + 15;

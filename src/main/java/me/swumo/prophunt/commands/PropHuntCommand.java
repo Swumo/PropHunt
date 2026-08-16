@@ -43,24 +43,23 @@ public class PropHuntCommand {
     @CommandDescription("Join the PropHunt queue.")
     public void join(CommandSourceStack stack) {
         if (!(stack.getSender() instanceof Player p)) {
-            stack.getSender()
-                    .sendMessage(plugin.getCommandConfigText("messages.errors.players-only", "&cPlayers only."));
+            send(stack.getSender(), plugin.getCommandConfigText("messages.errors.players-only", "&cPlayers only."));
             return;
         }
         GameManager gm = plugin.getGameManager();
         if (!gm.isQueueOpen()) {
-            p.sendMessage(plugin.getCommandConfigText("messages.queue.not-open",
-                    "&cQueue is not open. Wait for an admin to use /prophunt queue."));
+            send(p, plugin.getCommandConfigText("messages.queue.not-open",
+                "&cQueue is not open. Wait for an admin to use /prophunt queue."));
             return;
         }
         if (gm.joinQueue(p)) {
-            p.sendMessage(plugin.getCommandConfigText("messages.queue.joined", "&aYou joined the PropHunt queue."));
+            send(p, plugin.getCommandConfigText("messages.queue.joined", "&aYou joined the PropHunt queue."));
             plugin.broadcastCommandConfigText(
                     "messages.queue.player-joined",
                     "&e{player} has joined the queue.",
                     java.util.Map.of("player", p.getName()));
         } else {
-            p.sendMessage(plugin.getCommandConfigText("messages.queue.already-joined",
+                send(p, plugin.getCommandConfigText("messages.queue.already-joined",
                     "&eYou are already in the queue."));
         }
     }
@@ -69,15 +68,14 @@ public class PropHuntCommand {
     @CommandDescription("Leave the PropHunt queue.")
     public void leave(CommandSourceStack stack) {
         if (!(stack.getSender() instanceof Player p)) {
-            stack.getSender()
-                    .sendMessage(plugin.getCommandConfigText("messages.errors.players-only", "&cPlayers only."));
+            send(stack.getSender(), plugin.getCommandConfigText("messages.errors.players-only", "&cPlayers only."));
             return;
         }
         GameManager gm = plugin.getGameManager();
         if (gm.leaveQueue(p)) {
-            p.sendMessage(plugin.getCommandConfigText("messages.queue.left", "&eYou left the PropHunt queue."));
+            send(p, plugin.getCommandConfigText("messages.queue.left", "&eYou left the PropHunt queue."));
         } else {
-            p.sendMessage(plugin.getCommandConfigText("messages.queue.not-in-queue", "&cYou are not in the queue."));
+            send(p, plugin.getCommandConfigText("messages.queue.not-in-queue", "&cYou are not in the queue."));
         }
     }
 
@@ -88,20 +86,20 @@ public class PropHuntCommand {
         CommandSender sender = stack.getSender();
         GameManager gm = plugin.getGameManager();
         if (gm.getState() != GameManager.State.WAITING) {
-            sender.sendMessage(plugin.getCommandConfigText("messages.queue.closed",
+            send(sender, plugin.getCommandConfigText("messages.queue.closed",
                     "&cQueue is closed while a game is running."));
             return;
         }
         if (gm.isQueueOpen()) {
             if (!gm.closeQueue()) {
-                sender.sendMessage(plugin.getCommandConfigText("messages.queue.unavailable",
+                send(sender, plugin.getCommandConfigText("messages.queue.unavailable",
                         "&cCould not update the queue right now."));
                 return;
             }
             plugin.broadcastCommandConfigText("messages.queue.closed-manual", "&eQueue closed.");
         } else {
             if (!gm.openQueue()) {
-                sender.sendMessage(plugin.getCommandConfigText("messages.queue.unavailable",
+                send(sender, plugin.getCommandConfigText("messages.queue.unavailable",
                         "&cCould not update the queue right now."));
                 return;
             }
@@ -129,13 +127,13 @@ public class PropHuntCommand {
         } else if ("convert".equalsIgnoreCase(mode)) {
             parsed = GameManager.OnDeathMode.CONVERT_TO_SEEKER;
         } else {
-            stack.getSender().sendMessage(plugin.getCommandConfigText(
+            send(stack.getSender(), plugin.getCommandConfigText(
                     "messages.command.invalid-gamemode",
                     "&cInvalid mode. Options: convert, spectate"));
             return;
         }
         gm.setOnDeathMode(parsed);
-        stack.getSender().sendMessage(plugin.getCommandConfigText(
+        send(stack.getSender(), plugin.getCommandConfigText(
                 "messages.command.gamemode-set",
                 "&aOn-death mode set to: &e{mode}",
                 java.util.Map.of("mode", mode.toLowerCase())));
@@ -146,7 +144,7 @@ public class PropHuntCommand {
     @Permission("prophunt.admin")
     public void stop(CommandSourceStack stack) {
         plugin.getGameManager().forceStop();
-        stack.getSender().sendMessage(plugin.getCommandConfigText("messages.command.stopped", "&ePropHunt stopped."));
+        send(stack.getSender(), plugin.getCommandConfigText("messages.command.stopped", "&ePropHunt stopped."));
     }
 
     @Command("prophunt|ph reload")
@@ -154,7 +152,7 @@ public class PropHuntCommand {
     @Permission("prophunt.admin")
     public void reload(CommandSourceStack stack) {
         plugin.reloadPluginConfig();
-        stack.getSender().sendMessage(
+        send(stack.getSender(),
                 plugin.getCommandConfigText("messages.command.reload-complete", "&aPropHunt config reloaded."));
     }
 
@@ -162,8 +160,7 @@ public class PropHuntCommand {
     @CommandDescription("Change your auto-assigned disguise block.")
     public void pick(CommandSourceStack stack) {
         if (!(stack.getSender() instanceof Player p)) {
-            stack.getSender()
-                    .sendMessage(plugin.getCommandConfigText("messages.errors.players-only", "&cPlayers only."));
+            send(stack.getSender(), plugin.getCommandConfigText("messages.errors.players-only", "&cPlayers only."));
             return;
         }
         plugin.getGameManager().openHiderBlockSelectionMenu(p);
@@ -175,15 +172,15 @@ public class PropHuntCommand {
     public void status(CommandSourceStack stack) {
         CommandSender sender = stack.getSender();
         GameManager gm = plugin.getGameManager();
-        sender.sendMessage(plugin.getCommandConfigText("messages.command.status-state", "&6State: {state}",
+        send(sender, plugin.getCommandConfigText("messages.command.status-state", "&6State: {state}",
                 java.util.Map.of("state", gm.getState().name())));
-        sender.sendMessage(plugin.getCommandConfigText("messages.command.status-mode", "&bMode: {mode}",
+        send(sender, plugin.getCommandConfigText("messages.command.status-mode", "&bMode: {mode}",
                 java.util.Map.of("mode", gm.getOnDeathMode() == GameManager.OnDeathMode.SPECTATE ? "spectate" : "convert")));
-        sender.sendMessage(plugin.getCommandConfigText("messages.command.status-hiders", "&aHiders: {count}",
+        send(sender, plugin.getCommandConfigText("messages.command.status-hiders", "&aHiders: {count}",
                 java.util.Map.of("count", gm.getHiders().size())));
-        sender.sendMessage(plugin.getCommandConfigText("messages.command.status-seekers", "&cSeekers: {count}",
+        send(sender, plugin.getCommandConfigText("messages.command.status-seekers", "&cSeekers: {count}",
                 java.util.Map.of("count", gm.getSeekers().size())));
-        sender.sendMessage(plugin.getCommandConfigText("messages.command.status-queue",
+        send(sender, plugin.getCommandConfigText("messages.command.status-queue",
                 "&eQueue: {count} ({open})",
                 java.util.Map.of("count", gm.getQueueSize(), "open", gm.isQueueOpen() ? "open" : "closed")));
     }
@@ -195,7 +192,7 @@ public class PropHuntCommand {
             @Argument(value = "player", suggestions = "queued_players") String playerName) {
         Player target = resolveOnlinePlayer(playerName);
         if (target == null) {
-            stack.getSender().sendMessage(plugin.getCommandConfigText(
+            send(stack.getSender(), plugin.getCommandConfigText(
                     "messages.command.player-not-found",
                     "&cPlayer not found: {player}",
                     java.util.Map.of("player", playerName)));
@@ -208,7 +205,7 @@ public class PropHuntCommand {
     @CommandDescription("Create a new arena.")
     @Permission("prophunt.admin")
     public void arenaCreate(CommandSourceStack stack, @Argument("name") String name) {
-        stack.getSender().sendMessage(plugin.applyCommandPrefix(plugin.getGameManager().createArena(name)));
+        send(stack.getSender(), plugin.applyCommandPrefix(plugin.getGameManager().createArena(name)));
     }
 
     @Command("prophunt|ph arena remove <name>")
@@ -216,7 +213,7 @@ public class PropHuntCommand {
     @Permission("prophunt.admin")
     public void arenaRemove(CommandSourceStack stack,
             @Argument(value = "name", suggestions = "arena_names") String name) {
-        stack.getSender().sendMessage(plugin.applyCommandPrefix(plugin.getGameManager().removeArena(name)));
+        send(stack.getSender(), plugin.applyCommandPrefix(plugin.getGameManager().removeArena(name)));
     }
 
     @Command("prophunt|ph arena list")
@@ -225,10 +222,10 @@ public class PropHuntCommand {
     public void arenaList(CommandSourceStack stack) {
         List<String> arenas = plugin.getGameManager().getArenaNames();
         if (arenas.isEmpty()) {
-            stack.getSender().sendMessage(plugin.getCommandConfigText("messages.command.no-arenas-configured",
+            send(stack.getSender(), plugin.getCommandConfigText("messages.command.no-arenas-configured",
                     "&cNo arenas configured."));
         } else {
-            stack.getSender().sendMessage(plugin.getCommandConfigText("messages.command.arenas-list",
+            send(stack.getSender(), plugin.getCommandConfigText("messages.command.arenas-list",
                     "&6Arenas: {arenas}", java.util.Map.of("arenas", String.join(", ", arenas))));
         }
     }
@@ -238,7 +235,7 @@ public class PropHuntCommand {
     @Permission("prophunt.admin")
     public void arenaInfo(CommandSourceStack stack,
             @Argument(value = "name", suggestions = "arena_names") String name) {
-        stack.getSender().sendMessage(plugin.applyCommandPrefix(plugin.getGameManager().arenaInfo(name)));
+        send(stack.getSender(), plugin.applyCommandPrefix(plugin.getGameManager().arenaInfo(name)));
     }
 
     @Command("prophunt|ph arena pos1 <name>")
@@ -247,11 +244,10 @@ public class PropHuntCommand {
     public void arenaPos1(CommandSourceStack stack,
             @Argument(value = "name", suggestions = "arena_names") String name) {
         if (!(stack.getSender() instanceof Player p)) {
-            stack.getSender()
-                    .sendMessage(plugin.getCommandConfigText("messages.errors.players-only", "&cPlayers only."));
+            send(stack.getSender(), plugin.getCommandConfigText("messages.errors.players-only", "&cPlayers only."));
             return;
         }
-        p.sendMessage(plugin.applyCommandPrefix(plugin.getGameManager().setArenaPos1(p, name)));
+        send(p, plugin.applyCommandPrefix(plugin.getGameManager().setArenaPos1(p, name)));
     }
 
     @Command("prophunt|ph arena pos2 <name>")
@@ -260,11 +256,10 @@ public class PropHuntCommand {
     public void arenaPos2(CommandSourceStack stack,
             @Argument(value = "name", suggestions = "arena_names") String name) {
         if (!(stack.getSender() instanceof Player p)) {
-            stack.getSender()
-                    .sendMessage(plugin.getCommandConfigText("messages.errors.players-only", "&cPlayers only."));
+            send(stack.getSender(), plugin.getCommandConfigText("messages.errors.players-only", "&cPlayers only."));
             return;
         }
-        p.sendMessage(plugin.applyCommandPrefix(plugin.getGameManager().setArenaPos2(p, name)));
+        send(p, plugin.applyCommandPrefix(plugin.getGameManager().setArenaPos2(p, name)));
     }
 
     @Command("prophunt|ph arena addhiderspawn <name>")
@@ -273,11 +268,10 @@ public class PropHuntCommand {
     public void arenaAddHiderSpawn(CommandSourceStack stack,
             @Argument(value = "name", suggestions = "arena_names") String name) {
         if (!(stack.getSender() instanceof Player p)) {
-            stack.getSender()
-                    .sendMessage(plugin.getCommandConfigText("messages.errors.players-only", "&cPlayers only."));
+            send(stack.getSender(), plugin.getCommandConfigText("messages.errors.players-only", "&cPlayers only."));
             return;
         }
-        p.sendMessage(plugin.applyCommandPrefix(plugin.getGameManager().addHiderSpawn(p, name)));
+        send(p, plugin.applyCommandPrefix(plugin.getGameManager().addHiderSpawn(p, name)));
     }
 
     @Command("prophunt|ph arena addseekerspawn <name>")
@@ -286,11 +280,10 @@ public class PropHuntCommand {
     public void arenaAddSeekerSpawn(CommandSourceStack stack,
             @Argument(value = "name", suggestions = "arena_names") String name) {
         if (!(stack.getSender() instanceof Player p)) {
-            stack.getSender()
-                    .sendMessage(plugin.getCommandConfigText("messages.errors.players-only", "&cPlayers only."));
+            send(stack.getSender(), plugin.getCommandConfigText("messages.errors.players-only", "&cPlayers only."));
             return;
         }
-        p.sendMessage(plugin.applyCommandPrefix(plugin.getGameManager().addSeekerSpawn(p, name)));
+        send(p, plugin.applyCommandPrefix(plugin.getGameManager().addSeekerSpawn(p, name)));
     }
 
     @Suggestions("on_death_modes")
@@ -314,5 +307,9 @@ public class PropHuntCommand {
             return exact;
         }
         return Bukkit.getPlayer(playerName);
+    }
+
+    private void send(CommandSender recipient, String message) {
+        plugin.sendMiniMessage(recipient, message);
     }
 }

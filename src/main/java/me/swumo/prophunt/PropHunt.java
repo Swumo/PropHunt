@@ -9,6 +9,7 @@ import me.swumo.prophunt.platform.PlatformScheduler;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Bukkit;
+import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -210,10 +211,20 @@ public class PropHunt extends JavaPlugin {
 
     public void broadcastCommandMessage(String message) {
         String formatted = applyCommandPrefix(message);
-        Component component = MiniMessage.miniMessage().deserialize(formatted);
+        Component component = deserializeMiniMessage(formatted);
         for (org.bukkit.entity.Player player : Bukkit.getOnlinePlayers()) {
             player.sendMessage(component);
         }
+    }
+
+    public void sendMiniMessage(CommandSender recipient, String message) {
+        if (recipient != null) {
+            recipient.sendMessage(deserializeMiniMessage(message));
+        }
+    }
+
+    public Component deserializeMiniMessage(String message) {
+        return MiniMessage.miniMessage().deserialize(message == null ? "" : message);
     }
 
     public List<String> getConfigTextList(String path, List<String> fallback) {

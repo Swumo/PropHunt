@@ -13,6 +13,7 @@ import org.bukkit.block.data.Directional;
 import org.bukkit.block.data.Orientable;
 import org.bukkit.block.data.Rotatable;
 import org.bukkit.block.data.type.Bed;
+import org.bukkit.block.data.type.Leaves;
 import org.bukkit.block.data.type.Stairs;
 import org.bukkit.block.data.type.TrapDoor;
 import org.bukkit.entity.BlockDisplay;
@@ -210,7 +211,13 @@ public class HiderData {
         for (DisguisePart part : parts) {
             Block block = anchor.clone().add(part.xOffset(), part.yOffset(), part.zOffset()).getBlock();
             replacedBlockStates.add(new PlacedBlockState(block.getLocation(), block.getBlockData().clone()));
-            block.setBlockData(part.blockData(), false);
+            BlockData placedData = part.blockData();
+            if (placedData instanceof Leaves leaves) {
+                Leaves persistentLeaves = (Leaves) leaves.clone();
+                persistentLeaves.setPersistent(true);
+                placedData = persistentLeaves;
+            }
+            block.setBlockData(placedData, false);
         }
         placedBlockLocation = anchor.getBlock().getLocation();
         worldBlockPlaced = true;

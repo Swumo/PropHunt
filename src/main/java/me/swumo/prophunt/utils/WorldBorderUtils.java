@@ -6,7 +6,6 @@ import org.bukkit.WorldBorder;
 import org.bukkit.entity.Player;
 
 import java.util.Collection;
-import java.util.List;
 import java.util.UUID;
 
 public final class WorldBorderUtils {
