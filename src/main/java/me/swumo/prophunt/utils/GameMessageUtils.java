@@ -1,6 +1,6 @@
 package me.swumo.prophunt.utils;
 
-import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
+import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.title.Title;
 import net.kyori.adventure.title.TitlePart;
 import org.bukkit.Bukkit;
@@ -34,28 +34,29 @@ public final class GameMessageUtils {
     }
 
     public static void sendTitle(Collection<UUID> recipients, String title, String subtitle) {
+        MiniMessage mini = MiniMessage.miniMessage();
         for (UUID recipientId : recipients) {
             Player recipient = Bukkit.getPlayer(recipientId);
             if (recipient == null || !recipient.isOnline())
                 continue;
 
             recipient.showTitle(Title.title(
-                    LegacyComponentSerializer.legacySection().deserialize(title),
-                    LegacyComponentSerializer.legacySection().deserialize(subtitle),
+                    mini.deserialize(title),
+                    mini.deserialize(subtitle),
                     NO_FADE_TITLE_TIMES));
         }
     }
 
     public static void updateTitle(Collection<UUID> recipients, String title, String subtitle) {
+        MiniMessage mini = MiniMessage.miniMessage();
         for (UUID recipientId : recipients) {
             Player recipient = Bukkit.getPlayer(recipientId);
             if (recipient == null || !recipient.isOnline())
                 continue;
 
             recipient.sendTitlePart(TitlePart.TIMES, NO_FADE_TITLE_TIMES);
-            recipient.sendTitlePart(TitlePart.TITLE, LegacyComponentSerializer.legacySection().deserialize(title));
-            recipient.sendTitlePart(TitlePart.SUBTITLE,
-                    LegacyComponentSerializer.legacySection().deserialize(subtitle));
+            recipient.sendTitlePart(TitlePart.TITLE, mini.deserialize(title));
+            recipient.sendTitlePart(TitlePart.SUBTITLE, mini.deserialize(subtitle));
         }
     }
 

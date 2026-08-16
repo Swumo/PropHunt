@@ -5,6 +5,7 @@ import me.swumo.prophunt.game.GameManager;
 import me.swumo.prophunt.game.HiderData;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.Tag;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Interaction;
@@ -23,9 +24,11 @@ import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerInteractAtEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
@@ -78,18 +81,23 @@ public class GameListeners implements Listener {
 
     }
 
-    // Prevent hiders from taking any damage during the seeking phase
+    // Prevent hiders and seekers from taking any damage during active gameplay
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onPlayerDamage(EntityDamageEvent event) {
         if (!(event.getEntity() instanceof Player p))
             return;
 
-        if (!gm().isHider(p))
+        if (!gm().isHider(p) && !gm().isSeeker(p))
             return;
 
-        HiderData data = gm().getHiderData(p.getUniqueId());
-        if (gm().getState() == GameManager.State.SEEKING_PHASE || (data != null && data.isLocked()))
-            event.setCancelled(true);
+        if (gm().isHider(p)) {
+            HiderData data = gm().getHiderData(p.getUniqueId());
+            if (gm().getState() == GameManager.State.SEEKING_PHASE || (data != null && data.isLocked()))
+                event.setCancelled(true);
+        } else if (gm().isSeeker(p)) {
+            if (gm().isActiveRound())
+                event.setCancelled(true);
+        }
     }
 
     // Remove any block damage caused by seekers
@@ -118,6 +126,31 @@ public class GameListeners implements Listener {
             return;
 
         event.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onPlayerInteractBlock(PlayerInteractEvent event) {
+        if (event.getAction() != Action.RIGHT_CLICK_BLOCK || event.getClickedBlock() == null)
+            return;
+
+        Player player = event.getPlayer();
+        if (!gm().isHider(player) && !gm().isSeeker(player))
+            return;
+
+        Material material = event.getClickedBlock().getType();
+        if (Tag.DOORS.isTagged(material) || Tag.BUTTONS.isTagged(material) || material == Material.LEVER)
+            return;
+
+        event.setUseInteractedBlock(Event.Result.DENY);
+        event.setUseItemInHand(Event.Result.DENY);
+        event.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onPlayerInteractEntity(PlayerInteractEntityEvent event) {
+        Player player = event.getPlayer();
+        if (gm().isHider(player) || gm().isSeeker(player))
+            event.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
@@ -396,6 +429,11 @@ public class GameListeners implements Listener {
     public void onPlayerQuit(PlayerQuitEvent event) {
         Player p = event.getPlayer();
         gm().handlePlayerQuit(p);
+    }
+
+    @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        gm().handlePlayerJoin(event.getPlayer());
     }
 
     // Hiders cant die during gameplay, so cancel any death events and suppress the

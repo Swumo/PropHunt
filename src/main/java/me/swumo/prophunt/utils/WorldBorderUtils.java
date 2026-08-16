@@ -15,7 +15,7 @@ public final class WorldBorderUtils {
         throw new IllegalStateException("This is a utility class.");
     }
 
-    public static void applyArenaWorldBorder(Player player, Location pos1, Location pos2, List<Location> hiderSpawns, List<Location> seekerSpawns) {
+    public static void applyArenaWorldBorder(Player player, Location pos1, Location pos2) {
         if (player == null || pos1 == null || pos2 == null || pos1.getWorld() == null || pos2.getWorld() == null) {
             return;
         }
@@ -24,22 +24,6 @@ public final class WorldBorderUtils {
         int maxX = Math.max(pos1.getBlockX(), pos2.getBlockX());
         int minZ = Math.min(pos1.getBlockZ(), pos2.getBlockZ());
         int maxZ = Math.max(pos1.getBlockZ(), pos2.getBlockZ());
-
-        for (Location spawn : hiderSpawns) {
-            if (spawn == null || spawn.getWorld() == null || !spawn.getWorld().equals(pos1.getWorld())) continue;
-            minX = Math.min(minX, spawn.getBlockX());
-            maxX = Math.max(maxX, spawn.getBlockX());
-            minZ = Math.min(minZ, spawn.getBlockZ());
-            maxZ = Math.max(maxZ, spawn.getBlockZ());
-        }
-
-        for (Location spawn : seekerSpawns) {
-            if (spawn == null || spawn.getWorld() == null || !spawn.getWorld().equals(pos1.getWorld())) continue;
-            minX = Math.min(minX, spawn.getBlockX());
-            maxX = Math.max(maxX, spawn.getBlockX());
-            minZ = Math.min(minZ, spawn.getBlockZ());
-            maxZ = Math.max(maxZ, spawn.getBlockZ());
-        }
 
         double centerX = (minX + maxX + 1) / 2.0;
         double centerZ = (minZ + maxZ + 1) / 2.0;
@@ -82,15 +66,13 @@ public final class WorldBorderUtils {
     public static void applyArenaWorldBorders(
             Collection<UUID> recipients,
             Location pos1,
-            Location pos2,
-            List<Location> hiderSpawns,
-            List<Location> seekerSpawns
+            Location pos2
     ) {
         for (UUID recipientId : recipients) {
             Player recipient = Bukkit.getPlayer(recipientId);
             if (recipient == null || !recipient.isOnline()) continue;
 
-            applyArenaWorldBorder(recipient, pos1, pos2, hiderSpawns, seekerSpawns);
+            applyArenaWorldBorder(recipient, pos1, pos2);
         }
     }
 }

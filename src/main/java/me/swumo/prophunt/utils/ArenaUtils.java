@@ -1,10 +1,10 @@
 package me.swumo.prophunt.utils;
 
 import org.bukkit.Bukkit;
+import org.bukkit.ChunkSnapshot;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
-import org.bukkit.block.Block;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
@@ -16,7 +16,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 public final class ArenaUtils {
@@ -81,8 +80,8 @@ public final class ArenaUtils {
         public final Location pos2;
         public final List<Location> hiderSpawns;
         public final List<Location> seekerSpawns;
-        public final List<Material> cachedBlockPool = Collections.synchronizedList(new ArrayList<>());
-        public boolean blockPoolGenerated = false;
+        private List<Material> cachedBlockPool = Collections.emptyList();
+        private boolean blockPoolGenerated;
 
         public ArenaRuntime(String name, String world, Location pos1, Location pos2,
                 List<Location> hiderSpawns, List<Location> seekerSpawns) {
@@ -100,6 +99,24 @@ public final class ArenaUtils {
 
         public boolean hasSpawns() {
             return !hiderSpawns.isEmpty() && !seekerSpawns.isEmpty();
+        }
+
+        public synchronized List<Material> getCachedBlockPool() {
+            return cachedBlockPool;
+        }
+
+        public synchronized boolean isBlockPoolGenerated() {
+            return blockPoolGenerated;
+        }
+
+        public synchronized void cacheBlockPool(List<Material> blockPool) {
+            cachedBlockPool = List.copyOf(blockPool);
+            blockPoolGenerated = true;
+        }
+
+        public synchronized void invalidateBlockPool() {
+            cachedBlockPool = Collections.emptyList();
+            blockPoolGenerated = false;
         }
     }
 
@@ -303,33 +320,47 @@ public final class ArenaUtils {
             return Collections.emptyList();
         }
 
+        World world = pos1.getWorld();
         int minX = Math.min(pos1.getBlockX(), pos2.getBlockX());
         int maxX = Math.max(pos1.getBlockX(), pos2.getBlockX());
-        int minY = Math.max(pos1.getWorld().getMinHeight(), Math.min(pos1.getBlockY(), pos2.getBlockY()));
-        int maxY = Math.min(pos1.getWorld().getMaxHeight() - 1, Math.max(pos1.getBlockY(), pos2.getBlockY()));
+        int minY = Math.max(world.getMinHeight(), Math.min(pos1.getBlockY(), pos2.getBlockY()));
+        int maxY = Math.min(world.getMaxHeight() - 1, Math.max(pos1.getBlockY(), pos2.getBlockY()));
         int minZ = Math.min(pos1.getBlockZ(), pos2.getBlockZ());
         int maxZ = Math.max(pos1.getBlockZ(), pos2.getBlockZ());
 
         Map<Material, Integer> counts = new HashMap<>();
         int scanned = 0;
-        for (int x = minX; x <= maxX; x++) {
-            for (int y = minY; y <= maxY; y++) {
-                for (int z = minZ; z <= maxZ; z++) {
-                    if (scanned++ >= arenaScanMaxBlocks)
-                        break;
+        boolean stop = false;
 
-                    Block block = pos1.getWorld().getBlockAt(x, y, z);
-                    Material material = block.getType();
-                    if (!allowMaterial.test(material))
-                        continue;
+        for (int chunkX = Math.floorDiv(minX, 16); chunkX <= Math.floorDiv(maxX, 16) && !stop; chunkX++) {
+            for (int chunkZ = Math.floorDiv(minZ, 16); chunkZ <= Math.floorDiv(maxZ, 16) && !stop; chunkZ++) {
+                if (!world.isChunkLoaded(chunkX, chunkZ))
+                    continue;
 
-                    counts.put(material, counts.getOrDefault(material, 0) + 1);
+                ChunkSnapshot chunk = world.getChunkAt(chunkX, chunkZ).getChunkSnapshot();
+                int chunkMinX = chunkX * 16;
+                int chunkMaxX = chunkMinX + 15;
+                int chunkMinZ = chunkZ * 16;
+                int chunkMaxZ = chunkMinZ + 15;
+
+                for (int x = Math.max(minX, chunkMinX); x <= Math.min(maxX, chunkMaxX) && !stop; x++) {
+                    for (int y = minY; y <= maxY && !stop; y++) {
+                        for (int z = Math.max(minZ, chunkMinZ); z <= Math.min(maxZ, chunkMaxZ) && !stop; z++) {
+                            if (scanned >= arenaScanMaxBlocks) {
+                                stop = true;
+                                break;
+                            }
+
+                            Material material = chunk.getBlockType(x & 15, y, z & 15);
+                            if (!allowMaterial.test(material))
+                                continue;
+
+                            counts.put(material, counts.getOrDefault(material, 0) + 1);
+                            scanned++;
+                        }
+                    }
                 }
-                if (scanned >= arenaScanMaxBlocks)
-                    break;
             }
-            if (scanned >= arenaScanMaxBlocks)
-                break;
         }
 
         if (counts.isEmpty())
@@ -349,26 +380,4 @@ public final class ArenaUtils {
         return weighted;
     }
 
-    public static void preGenerateArenaBlocks(
-            Location pos1,
-            Location pos2,
-            int arenaScanMaxBlocks,
-            int minOccurrences,
-            Predicate<Material> allowMaterial,
-            List<Material> cachedBlockPool,
-            Consumer<Runnable> asyncRunner,
-            Runnable markGenerated) {
-        if (pos1 == null || pos2 == null || pos1.getWorld() == null || pos2.getWorld() == null) {
-            return;
-        }
-
-        asyncRunner.accept(() -> {
-            List<Material> blocks = sampleArenaBlocks(pos1, pos2, arenaScanMaxBlocks, minOccurrences, allowMaterial);
-            if (!blocks.isEmpty()) {
-                cachedBlockPool.clear();
-                cachedBlockPool.addAll(blocks);
-            }
-            markGenerated.run();
-        });
-    }
 }

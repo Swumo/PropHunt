@@ -31,8 +31,8 @@ import java.util.UUID;
 public class HiderData {
     private static final AxisAngle4f NO_ROTATION = new AxisAngle4f(0, 0, 1, 0);
     private final UUID uuid;
-    @Setter
     private Material chosenBlock;
+    private BlockData baseBlockData;
     private final List<BlockDisplay> blockDisplays = new ArrayList<>();
     private Interaction propHitbox;
     private Location placedBlockLocation;
@@ -50,6 +50,11 @@ public class HiderData {
     public HiderData(UUID uuid, int maxHp) {
         this.uuid = uuid;
         this.hp = maxHp;
+    }
+
+    public void setChosenBlock(Material chosenBlock) {
+        this.chosenBlock = chosenBlock;
+        this.baseBlockData = chosenBlock == null ? null : chosenBlock.createBlockData();
     }
 
     public void resetStillTicks() {
@@ -335,10 +340,17 @@ public class HiderData {
     }
 
     private BlockData createOrientedBlockData(Player player) {
-        BlockData data = chosenBlock.createBlockData();
+        if (baseBlockData == null)
+            return chosenBlock == null ? null : chosenBlock.createBlockData();
         if (player == null)
-            return data;
+            return baseBlockData;
 
+        if (!(baseBlockData instanceof Directional)
+                && !(baseBlockData instanceof Rotatable)
+                && !(baseBlockData instanceof Orientable))
+            return baseBlockData;
+
+        BlockData data = baseBlockData.clone();
         BlockFace horizontalFace = resolveHorizontalFace(player);
 
         if (data instanceof Directional directional) {

@@ -57,6 +57,7 @@ public class GameManager {
     @Getter
     private State state = State.WAITING;
     private final Map<UUID, HiderData> hiders = new HashMap<>();
+    private final Map<UUID, UUID> disguiseEntityOwners = new HashMap<>();
     private final Set<UUID> seekers = new HashSet<>();
     private final Set<UUID> spectators = new HashSet<>();
     private OnDeathMode onDeathMode = OnDeathMode.CONVERT_TO_SEEKER;
@@ -70,6 +71,7 @@ public class GameManager {
     private final Set<UUID> queuedPlayers = new LinkedHashSet<>();
     private final Set<UUID> forcedSeekersInQueue = new HashSet<>();
     private final List<Material> currentArenaBlockPool = new ArrayList<>();
+    private final Map<String, ArenaRuntime> arenaRuntimeCache = new HashMap<>();
     private boolean queueOpen;
     private ArenaRuntime selectedArena;
     private PlatformTask tickTask;
@@ -94,6 +96,7 @@ public class GameManager {
     private final Set<Material> allowedNonSolidDisguiseBlocks = EnumSet.noneOf(Material.class);
     private final Set<Material> forceAllowDisguiseBlocks = EnumSet.noneOf(Material.class);
     private final Set<Material> forceDenyDisguiseBlocks = EnumSet.noneOf(Material.class);
+    private final Set<Material> allowedDisguiseBlocks = EnumSet.noneOf(Material.class);
     private final List<Material> defaultHiderBlocks = new ArrayList<>();
     private static final EnumSet<Material> FALLBACK_HIDER_BLOCKS = EnumSet.of(
             Material.GRASS_BLOCK, Material.DIRT, Material.STONE, Material.COBBLESTONE,
@@ -158,17 +161,10 @@ public class GameManager {
         adjustRunningMatch(oldHiderMaxHp, oldSeekerGracePeriod, oldGameDuration);
 
         if (selectedArena != null) {
+            selectedArena.invalidateBlockPool();
+            cacheArenaBlockPool(selectedArena);
             currentArenaBlockPool.clear();
-            if (!selectedArena.cachedBlockPool.isEmpty()) {
-                currentArenaBlockPool.addAll(selectedArena.cachedBlockPool);
-            } else {
-                currentArenaBlockPool.addAll(ArenaUtils.sampleArenaBlocks(
-                        selectedArena.pos1,
-                        selectedArena.pos2,
-                        arenaScanMaxBlocks,
-                        arenaMinBlockOccurrences,
-                        this::isAllowedPropMaterial));
-            }
+            currentArenaBlockPool.addAll(selectedArena.getCachedBlockPool());
 
             if (currentArenaBlockPool.isEmpty())
                 currentArenaBlockPool.addAll(defaultHiderBlocks);
@@ -232,17 +228,8 @@ public class GameManager {
         selectedArena = playableArenas.get(ThreadLocalRandom.current().nextInt(playableArenas.size()));
         queueOpen = false;
         currentArenaBlockPool.clear();
-
-        if (!selectedArena.cachedBlockPool.isEmpty()) {
-            currentArenaBlockPool.addAll(selectedArena.cachedBlockPool);
-        } else {
-            currentArenaBlockPool.addAll(ArenaUtils.sampleArenaBlocks(
-                    selectedArena.pos1,
-                    selectedArena.pos2,
-                    arenaScanMaxBlocks,
-                    arenaMinBlockOccurrences,
-                    this::isAllowedPropMaterial));
-        }
+        cacheArenaBlockPool(selectedArena);
+        currentArenaBlockPool.addAll(selectedArena.getCachedBlockPool());
 
         if (currentArenaBlockPool.isEmpty())
             currentArenaBlockPool.addAll(defaultHiderBlocks);
@@ -295,9 +282,7 @@ public class GameManager {
             WorldBorderUtils.applyArenaWorldBorders(
                     GameMessageUtils.matchRecipients(hiders.keySet(), seekers),
                     selectedArena.pos1,
-                    selectedArena.pos2,
-                    selectedArena.hiderSpawns,
-                    selectedArena.seekerSpawns);
+                    selectedArena.pos2);
         }
 
         PlatformScheduler scheduler = plugin.getPlatformScheduler();
@@ -397,7 +382,7 @@ public class GameManager {
             return;
 
         if (state == State.HIDING_PHASE) {
-            for (Map.Entry<UUID, Location> entry : new HashMap<>(frozenSeekers).entrySet()) {
+            for (Map.Entry<UUID, Location> entry : frozenSeekers.entrySet()) {
                 Player seeker = Bukkit.getPlayer(entry.getKey());
                 if (seeker == null || !seeker.isOnline())
                     continue;
@@ -410,7 +395,7 @@ public class GameManager {
             }
         }
 
-        for (Map.Entry<UUID, HiderData> entry : new ArrayList<>(hiders.entrySet())) {
+        for (Map.Entry<UUID, HiderData> entry : hiders.entrySet()) {
             Player p = Bukkit.getPlayer(entry.getKey());
             HiderData data = entry.getValue();
             if (p == null || !p.isOnline())
@@ -420,7 +405,6 @@ public class GameManager {
 
             if (data.isLocked()) {
                 p.setInvisible(true);
-                hideHiderFromSeekers(p);
                 if (data.getPlacedBlockLocation() != null) {
                     Location anchor = data.getLockedPlayerLocation() != null
                             ? data.getLockedPlayerLocation().clone()
@@ -442,7 +426,6 @@ public class GameManager {
             }
 
             p.setInvisible(true);
-            hideHiderFromSeekers(p);
             data.updateMobileDisguisePosition(p);
             if (isInBlockSelectionMenu(p)) {
                 data.resetStillTicks();
@@ -492,6 +475,7 @@ public class GameManager {
         data.setLockedAnchor(anchor);
         data.placeWorldBlock(anchor, p);
         data.removeDisplay();
+        removeDisguiseEntityIndex(p.getUniqueId());
 
         // While locked, remove the personal world border so border push cannot pop the
         // hider out.
@@ -759,13 +743,12 @@ public class GameManager {
                 WorldBorderUtils.applyArenaWorldBorder(
                         p,
                         selectedArena.pos1,
-                        selectedArena.pos2,
-                        selectedArena.hiderSpawns,
-                        selectedArena.seekerSpawns);
+                    selectedArena.pos2);
             }
         }
 
         data.spawnDisplay(p);
+        indexDisguiseEntities(p.getUniqueId(), data);
         hideHiderFromSeekers(p);
         GameMessageUtils.sendTitle(p, msg("titles.unlocked.title", "&eUNLOCKED"),
                 msg("titles.unlocked.subtitle", "&aKeep moving"));
@@ -789,14 +772,7 @@ public class GameManager {
     public void handleHiderHit(Player seeker, org.bukkit.entity.BlockDisplay display) {
         if (state != State.SEEKING_PHASE)
             return;
-        UUID targetUUID = null;
-        for (Map.Entry<UUID, HiderData> entry : hiders.entrySet()) {
-            if (entry.getValue().ownsDisplay(display)) {
-                targetUUID = entry.getKey();
-                break;
-            }
-        }
-
+        UUID targetUUID = getDisguiseEntityOwner(display.getUniqueId(), display);
         if (targetUUID == null)
             return;
         applyHiderHit(seeker, targetUUID);
@@ -805,17 +781,40 @@ public class GameManager {
     public void handleHiderHit(Player seeker, Interaction hitbox) {
         if (state != State.SEEKING_PHASE)
             return;
-        UUID targetUUID = null;
-        for (Map.Entry<UUID, HiderData> entry : hiders.entrySet()) {
-            if (hitbox.equals(entry.getValue().getPropHitbox())) {
-                targetUUID = entry.getKey();
-                break;
-            }
-        }
-
+        UUID targetUUID = getDisguiseEntityOwner(hitbox.getUniqueId(), hitbox);
         if (targetUUID == null)
             return;
         applyHiderHit(seeker, targetUUID);
+    }
+
+    private UUID getDisguiseEntityOwner(UUID entityId, org.bukkit.entity.Entity entity) {
+        UUID hiderId = disguiseEntityOwners.get(entityId);
+        if (hiderId == null)
+            return null;
+
+        HiderData data = hiders.get(hiderId);
+        boolean ownsEntity = entity instanceof org.bukkit.entity.BlockDisplay display
+                ? data != null && data.ownsDisplay(display)
+                : entity instanceof Interaction hitbox && data != null && hitbox.equals(data.getPropHitbox());
+        if (ownsEntity)
+            return hiderId;
+
+        disguiseEntityOwners.remove(entityId);
+        return null;
+    }
+
+    private void indexDisguiseEntities(UUID hiderId, HiderData data) {
+        removeDisguiseEntityIndex(hiderId);
+        for (org.bukkit.entity.BlockDisplay display : data.getBlockDisplays()) {
+            disguiseEntityOwners.put(display.getUniqueId(), hiderId);
+        }
+        Interaction hitbox = data.getPropHitbox();
+        if (hitbox != null)
+            disguiseEntityOwners.put(hitbox.getUniqueId(), hiderId);
+    }
+
+    private void removeDisguiseEntityIndex(UUID hiderId) {
+        disguiseEntityOwners.values().removeIf(hiderId::equals);
     }
 
     public boolean handleHiderBlockHit(Player seeker, Location blockLocation) {
@@ -867,6 +866,7 @@ public class GameManager {
                 return;
 
             data.clearDisguise();
+            removeDisguiseEntityIndex(uid);
             clearHiderTrackingState(uid);
             spectators.add(uid);
 
@@ -937,6 +937,7 @@ public class GameManager {
                         : msg("titles.seekers-win.subtitle", "&eRound over"));
         for (Map.Entry<UUID, HiderData> e : hiders.entrySet()) {
             e.getValue().clearDisguise();
+            removeDisguiseEntityIndex(e.getKey());
             Player p = Bukkit.getPlayer(e.getKey());
             if (p != null) {
                 removeHiderMenuItem(p);
@@ -968,7 +969,9 @@ public class GameManager {
 
     private void cleanup() {
         WorldBorderUtils.clearWorldBorders(GameMessageUtils.matchRecipients(hiders.keySet(), seekers));
+        unregisterCollisionTeams();
         hiders.clear();
+        disguiseEntityOwners.clear();
         seekers.clear();
         spectators.clear();
         lastLocations.clear();
@@ -999,6 +1002,7 @@ public class GameManager {
         unfreezeAllSeekers();
         for (HiderData d : hiders.values())
             d.clearDisguise();
+        disguiseEntityOwners.clear();
 
         for (UUID uid : hiders.keySet()) {
             Player p = Bukkit.getPlayer(uid);
@@ -1006,7 +1010,7 @@ public class GameManager {
                 removeHiderMenuItem(p);
                 removePlayerFromCollisionTeams(p);
                 showHiderToSeekers(p);
-                resetPlayerAfterGame(p, GameMode.SURVIVAL);
+                resetPlayerAfterGame(p, GameMode.ADVENTURE);
             }
         }
 
@@ -1016,7 +1020,7 @@ public class GameManager {
                 removeHiderMenuItem(p);
                 removePlayerFromCollisionTeams(p);
                 restoreSeekerVisualWeapon(p);
-                resetPlayerAfterGame(p, GameMode.SURVIVAL);
+                resetPlayerAfterGame(p, GameMode.ADVENTURE);
             }
         }
 
@@ -1024,7 +1028,7 @@ public class GameManager {
             Player p = Bukkit.getPlayer(uid);
             if (p != null) {
                 removePlayerFromCollisionTeams(p);
-                resetPlayerAfterGame(p, GameMode.SURVIVAL);
+                resetPlayerAfterGame(p, GameMode.ADVENTURE);
             }
         }
 
@@ -1043,8 +1047,10 @@ public class GameManager {
         boolean activeGame = state == State.HIDING_PHASE || state == State.SEEKING_PHASE;
 
         HiderData data = hiders.get(p.getUniqueId());
-        if (data != null)
+        if (data != null) {
             data.clearDisguise();
+            removeDisguiseEntityIndex(p.getUniqueId());
+        }
 
         hiders.remove(p.getUniqueId());
         seekers.remove(p.getUniqueId());
@@ -1060,6 +1066,7 @@ public class GameManager {
         restoreSeekerVisualWeapon(p);
         p.setGlowing(false);
         p.setWorldBorder(null);
+        resetPlayerAfterGame(p, GameMode.ADVENTURE);
 
         if (!activeGame || (!wasHider && !wasSeeker))
             return;
@@ -1093,6 +1100,20 @@ public class GameManager {
         }
     }
 
+    public void handlePlayerJoin(Player player) {
+        UUID playerId = player.getUniqueId();
+        if (hiders.containsKey(playerId) || seekers.contains(playerId) || spectators.contains(playerId))
+            return;
+
+        resetPlayerAfterGame(player, GameMode.ADVENTURE);
+        for (Player onlinePlayer : Bukkit.getOnlinePlayers()) {
+            if (!onlinePlayer.equals(player)) {
+                onlinePlayer.showPlayer(plugin, player);
+                player.showPlayer(plugin, onlinePlayer);
+            }
+        }
+    }
+
     private void assignPlayerToNoCollisionTeam(Player player, boolean hiderRole) {
         if (player == null)
             return;
@@ -1120,29 +1141,43 @@ public class GameManager {
         if (player == null)
             return;
 
-        Team hiderTeam = ensureNoCollisionTeam(HIDER_NO_COLLISION_TEAM);
-        Team seekerTeam = ensureNoCollisionTeam(SEEKER_NO_COLLISION_TEAM);
-        if (hiderTeam == null || seekerTeam == null)
-            return;
-
         String entry = player.getName();
-        hiderTeam.removeEntry(entry);
-        seekerTeam.removeEntry(entry);
+        Team hiderTeam = getCollisionTeam(HIDER_NO_COLLISION_TEAM);
+        Team seekerTeam = getCollisionTeam(SEEKER_NO_COLLISION_TEAM);
+        if (hiderTeam != null)
+            hiderTeam.removeEntry(entry);
+        if (seekerTeam != null)
+            seekerTeam.removeEntry(entry);
     }
 
     private Team ensureNoCollisionTeam(String teamName) {
-        ScoreboardManager scoreboardManager = Bukkit.getScoreboardManager();
-        if (scoreboardManager == null)
-            return null;
-
-        Scoreboard scoreboard = scoreboardManager.getMainScoreboard();
-        Team team = scoreboard.getTeam(teamName);
+        Team team = getCollisionTeam(teamName);
         if (team == null) {
-            team = scoreboard.registerNewTeam(teamName);
+            ScoreboardManager scoreboardManager = Bukkit.getScoreboardManager();
+            if (scoreboardManager == null)
+                return null;
+
+            team = scoreboardManager.getMainScoreboard().registerNewTeam(teamName);
         }
 
         team.setOption(Team.Option.COLLISION_RULE, Team.OptionStatus.NEVER);
         return team;
+    }
+
+    private Team getCollisionTeam(String teamName) {
+        ScoreboardManager scoreboardManager = Bukkit.getScoreboardManager();
+        if (scoreboardManager == null)
+            return null;
+
+        return scoreboardManager.getMainScoreboard().getTeam(teamName);
+    }
+
+    private void unregisterCollisionTeams() {
+        for (String teamName : List.of(HIDER_NO_COLLISION_TEAM, SEEKER_NO_COLLISION_TEAM)) {
+            Team team = getCollisionTeam(teamName);
+            if (team != null)
+                team.unregister();
+        }
     }
 
     private void resetPlayerAfterGame(Player player, GameMode gameMode) {
@@ -1154,6 +1189,8 @@ public class GameManager {
         player.setGameMode(gameMode);
         player.setAllowFlight(false);
         player.setGravity(true);
+        player.setWalkSpeed(0.2f);
+        player.setFlySpeed(0.1f);
         clearAllPotionEffects(player);
     }
 
@@ -1336,23 +1373,7 @@ public class GameManager {
         }
 
         plugin.saveArenaConfig();
-
-        // Trigger block pre-generation when cuboid is completed
-        if (result.pos1() != null && result.pos2() != null) {
-            ArenaRuntime tempArena = new ArenaRuntime(result.key(), result.world(), result.pos1(), result.pos2(),
-                    new ArrayList<>(), new ArrayList<>());
-            if (!tempArena.blockPoolGenerated) {
-                ArenaUtils.preGenerateArenaBlocks(
-                        tempArena.pos1,
-                        tempArena.pos2,
-                        arenaScanMaxBlocks,
-                        arenaMinBlockOccurrences,
-                        this::isAllowedPropMaterial,
-                        tempArena.cachedBlockPool,
-                        runnable -> plugin.getPlatformScheduler().runAsync(runnable),
-                        () -> tempArena.blockPoolGenerated = true);
-            }
-        }
+        arenaRuntimeCache.remove(result.key());
 
         return msg("messages.arena.set-pos", "&aSet {pos} for arena {arena}.",
                 Map.of("pos", posKey, "arena", result.key()));
@@ -1377,31 +1398,62 @@ public class GameManager {
                 Map.of("type", hider ? "hider" : "seeker", "arena", result.key()));
     }
 
+    private ArenaRuntime getOrCreateArenaRuntime(ArenaUtils.ArenaDefinition loaded) {
+        ArenaRuntime cached = arenaRuntimeCache.get(loaded.name());
+        if (cached != null
+                && Objects.equals(cached.world, loaded.world())
+                && Objects.equals(cached.pos1, loaded.pos1())
+                && Objects.equals(cached.pos2, loaded.pos2())
+                && Objects.equals(cached.hiderSpawns, loaded.hiderSpawns())
+                && Objects.equals(cached.seekerSpawns, loaded.seekerSpawns())) {
+            return cached;
+        }
+
+        ArenaRuntime arena = new ArenaRuntime(
+                loaded.name(),
+                loaded.world(),
+                loaded.pos1(),
+                loaded.pos2(),
+                loaded.hiderSpawns(),
+                loaded.seekerSpawns());
+        arenaRuntimeCache.put(loaded.name(), arena);
+        return arena;
+    }
+
     private List<ArenaRuntime> loadArenasFromConfig() {
         List<ArenaUtils.ArenaDefinition> loadedArenas = ArenaUtils.loadArenas(plugin.getArenaConfig());
-        if (loadedArenas.isEmpty())
+        if (loadedArenas.isEmpty()) {
+            arenaRuntimeCache.clear();
             return Collections.emptyList();
+        }
 
         List<ArenaRuntime> arenas = new ArrayList<>();
         for (ArenaUtils.ArenaDefinition loaded : loadedArenas) {
-            ArenaRuntime arena = new ArenaRuntime(loaded.name(), loaded.world(), loaded.pos1(), loaded.pos2(),
-                    loaded.hiderSpawns(), loaded.seekerSpawns());
+            ArenaRuntime arena = getOrCreateArenaRuntime(loaded);
             arenas.add(arena);
+            cacheArenaBlockPool(arena);
+        }
 
-            // Pre-generate block pool asynchronously when arena is loaded
-            if (!arena.blockPoolGenerated) {
-                ArenaUtils.preGenerateArenaBlocks(
-                        arena.pos1,
-                        arena.pos2,
-                        arenaScanMaxBlocks,
-                        arenaMinBlockOccurrences,
-                        this::isAllowedPropMaterial,
-                        arena.cachedBlockPool,
-                        runnable -> plugin.getPlatformScheduler().runAsync(runnable),
-                        () -> arena.blockPoolGenerated = true);
+        for (Iterator<Map.Entry<String, ArenaRuntime>> it = arenaRuntimeCache.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<String, ArenaRuntime> entry = it.next();
+            if (loadedArenas.stream().noneMatch(loaded -> loaded.name().equals(entry.getKey()))) {
+                it.remove();
             }
         }
+
         return arenas;
+    }
+
+    private void cacheArenaBlockPool(ArenaRuntime arena) {
+        if (arena == null || arena.isBlockPoolGenerated())
+            return;
+
+        arena.cacheBlockPool(ArenaUtils.sampleArenaBlocks(
+                arena.pos1,
+                arena.pos2,
+                arenaScanMaxBlocks,
+                arenaMinBlockOccurrences,
+                this::isAllowedPropMaterial));
     }
 
     private void teleportToRandomSpawn(Player p, List<Location> spawns) {
@@ -1413,6 +1465,10 @@ public class GameManager {
     }
 
     private boolean isAllowedPropMaterial(Material mat) {
+        return allowedDisguiseBlocks.contains(mat);
+    }
+
+    private boolean isConfiguredPropMaterial(Material mat) {
         if (mat == null)
             return false;
         if (!mat.isBlock() || mat.isAir())
@@ -1429,6 +1485,14 @@ public class GameManager {
             return false;
 
         return true;
+    }
+
+    private void rebuildAllowedDisguiseBlocks() {
+        allowedDisguiseBlocks.clear();
+        for (Material material : Material.values()) {
+            if (isConfiguredPropMaterial(material))
+                allowedDisguiseBlocks.add(material);
+        }
     }
 
     private void freezeSeeker(Player player) {
@@ -1577,6 +1641,7 @@ public class GameManager {
             return null;
 
         data.clearDisguise();
+        removeDisguiseEntityIndex(playerId);
         clearHiderTrackingState(playerId);
         assignPlayerToSeekerTeam(playerId);
         return data;
@@ -1729,9 +1794,7 @@ public class GameManager {
             WorldBorderUtils.applyArenaWorldBorder(
                     target,
                     selectedArena.pos1,
-                    selectedArena.pos2,
-                    selectedArena.hiderSpawns,
-                    selectedArena.seekerSpawns);
+                    selectedArena.pos2);
         }
 
         giveSeekerVisualWeapon(target);
@@ -1802,6 +1865,7 @@ public class GameManager {
         data.setChosenBlock(block);
         data.clearDisguise();
         data.spawnDisplay(p);
+        indexDisguiseEntities(p.getUniqueId(), data);
 
         if (sendDisguisedAsMessage) {
             p.sendMessage(msg("messages.game.disguised-as", "&aDisguised as {block}!", Map.of("block", block.name())));
@@ -2055,20 +2119,22 @@ public class GameManager {
 
     private void messageRemainingBlocksToSeekers() {
         Map<Material, Integer> remainingCounts = new HashMap<>();
+        int hidersWithoutChosenBlock = 0;
         for (HiderData data : hiders.values()) {
             Material chosenBlock = data.getChosenBlock();
-            if (chosenBlock == null)
+            if (chosenBlock == null) {
+                hidersWithoutChosenBlock++;
                 continue;
+            }
 
-                remainingCounts.merge(chosenBlock, 1,
-                    (existing, increment) -> (existing == null ? 0 : existing) + (increment == null ? 0 : increment));
+            remainingCounts.merge(chosenBlock, 1, Integer::sum);
         }
 
         GameMessageUtils.sendPrefixedChat(seekers, msg("messages.prefix", "&6[PropHunt] &r"), msg(
                 "messages.game.final-minute-blocks-header",
                 "&6One minute left! &eRemaining hider blocks:"));
 
-        if (remainingCounts.isEmpty()) {
+        if (hiders.isEmpty()) {
             GameMessageUtils.sendPrefixedChat(seekers, msg("messages.prefix", "&6[PropHunt] &r"), msg(
                     "messages.game.final-minute-blocks-none",
                     "&7No hiders are left."));
@@ -2092,6 +2158,13 @@ public class GameManager {
                             "count", entry.getValue(),
                             "block", GameFormatUtils.formatBlockName(entry.getKey()))));
         }
+
+                if (hidersWithoutChosenBlock > 0) {
+                    GameMessageUtils.sendPrefixedChat(seekers, msg("messages.prefix", "&6[PropHunt] &r"), msg(
+                        "messages.game.final-minute-blocks-line",
+                        "&e{count}x &f{block}",
+                        Map.of("count", hidersWithoutChosenBlock, "block", "Unknown")));
+                }
     }
 
     private void loadSettings() {
@@ -2127,6 +2200,7 @@ public class GameManager {
         forceDenyDisguiseBlocks.clear();
         forceDenyDisguiseBlocks.addAll(GameConfigReader.materialSetSetting(config,
                 "gameplay.force-deny-disguise-blocks", Collections.emptySet()));
+        rebuildAllowedDisguiseBlocks();
         defaultHiderBlocks.clear();
         List<Material> loadedBlocks = GameConfigReader.materialListSetting(
                 config,
