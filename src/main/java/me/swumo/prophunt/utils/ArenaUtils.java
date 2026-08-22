@@ -178,7 +178,7 @@ public final class ArenaUtils {
             return new ArenaMutationResult(ArenaMutationStatus.MISSING_CUBOID, key, world, pos1, pos2);
         }
 
-        if (!WorldBorderUtils.isInsideCuboid(loc, pos1, pos2)) {
+        if (!ArenaBoundsUtils.isInsideCuboid(loc, pos1, pos2)) {
             return new ArenaMutationResult(ArenaMutationStatus.OUTSIDE_CUBOID, key, world, pos1, pos2);
         }
 

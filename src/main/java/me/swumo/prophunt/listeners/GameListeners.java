@@ -6,7 +6,6 @@ import me.swumo.prophunt.game.HiderData;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Tag;
-import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Interaction;
 import org.bukkit.entity.ItemFrame;
@@ -64,11 +63,6 @@ public class GameListeners implements Listener {
                 event.setCancelled(true);
                 if (gm().isSeeker(seeker))
                     gm().handleHiderHit(seeker, hitbox);
-            }
-            case BlockDisplay bd -> {
-                event.setCancelled(true);
-                if (gm().isSeeker(seeker))
-                    gm().handleHiderHit(seeker, bd);
             }
             case Player victim -> {
                 if (gm().isSeeker(seeker)) {
@@ -487,9 +481,5 @@ public class GameListeners implements Listener {
             return;
         }
 
-        if (target instanceof BlockDisplay blockDisplay) {
-            event.setCancelled(true);
-            gm().handleHiderHit(seeker, blockDisplay);
-        }
     }
 }

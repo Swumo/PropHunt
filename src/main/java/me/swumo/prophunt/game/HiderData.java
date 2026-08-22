@@ -3,6 +3,8 @@ package me.swumo.prophunt.game;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
+import me.swumo.prophunt.utils.BlockDisguiseManager;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
@@ -16,12 +18,8 @@ import org.bukkit.block.data.type.Bed;
 import org.bukkit.block.data.type.Leaves;
 import org.bukkit.block.data.type.Stairs;
 import org.bukkit.block.data.type.TrapDoor;
-import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Interaction;
 import org.bukkit.entity.Player;
-import org.bukkit.util.Transformation;
-import org.joml.AxisAngle4f;
-import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -30,11 +28,12 @@ import java.util.UUID;
 
 @Getter
 public class HiderData {
-    private static final AxisAngle4f NO_ROTATION = new AxisAngle4f(0, 0, 1, 0);
+    private static final BlockDisguiseManager BLOCK_DISGUISES = new BlockDisguiseManager();
     private final UUID uuid;
     private Material chosenBlock;
     private BlockData baseBlockData;
-    private final List<BlockDisplay> blockDisplays = new ArrayList<>();
+    private BlockFace mobileFacing;
+    private final List<UUID> disguiseViewerIds = new ArrayList<>();
     private Interaction propHitbox;
     private Location placedBlockLocation;
     private Location lockedPlayerLocation;
@@ -56,6 +55,7 @@ public class HiderData {
     public void setChosenBlock(Material chosenBlock) {
         this.chosenBlock = chosenBlock;
         this.baseBlockData = chosenBlock == null ? null : chosenBlock.createBlockData();
+        this.mobileFacing = null;
     }
 
     public void resetStillTicks() {
@@ -70,33 +70,23 @@ public class HiderData {
         return hp > 0;
     }
 
-    // Spawn the display block and interaction hitbox for this hider, and position
-    // them at the player's location
-    public void spawnDisplay(Player player) {
+    // Apply the packet-only mobile disguise and its server-side interaction hitbox.
+    public void applyMobileDisguise(Player player, Collection<? extends Player> viewers) {
         restoreWorldBlock();
-        removeDisplay();
+        removeMobileDisguise();
         if (chosenBlock == null)
             return;
 
         Location anchor = toDisplayAnchor(player.getLocation());
+        mobileFacing = resolveHorizontalFace(player);
 
+        List<Player> activeViewers = activeViewers(player, viewers);
         BlockData orientedData = createOrientedBlockData(player);
-        List<DisguisePart> parts = buildDisplayParts(orientedData);
-        for (DisguisePart part : parts) {
-            BlockDisplay display = player.getWorld().spawn(anchor, BlockDisplay.class, bd -> {
-                bd.setBlock(part.blockData());
-                bd.setTransformation(new Transformation(
-                        new Vector3f(-0.5f + part.xOffset(), part.yOffset(), -0.5f + part.zOffset()),
-                        NO_ROTATION,
-                        new Vector3f(1f, 1f, 1f),
-                        NO_ROTATION));
-                bd.setGravity(false);
-                bd.setInterpolationDuration(2);
-                bd.setTeleportDuration(2);
-                bd.setPersistent(false);
-            });
-            blockDisplays.add(display);
-        }
+        List<BlockDisguiseManager.Part> displayParts = buildDisguiseParts(orientedData).stream()
+            .map(part -> new BlockDisguiseManager.Part(
+                part.blockData(), part.xOffset(), part.yOffset(), part.zOffset()))
+            .toList();
+        BLOCK_DISGUISES.disguise(player, displayParts, activeViewers);
 
         propHitbox = player.getWorld().spawn(anchor, Interaction.class, interaction -> {
             // Keep the hitbox compact so it does not steal right-click interactions
@@ -107,67 +97,91 @@ public class HiderData {
             interaction.setGravity(false);
             interaction.setPersistent(false);
         });
-        updateMobileDisguisePosition(player);
+        updateMobileDisguisePosition(player, viewers);
     }
 
-    // Remove the display entities
-    public void removeDisplay() {
-        for (BlockDisplay blockDisplay : blockDisplays) {
-            if (blockDisplay != null && !blockDisplay.isDead())
-                blockDisplay.remove();
-        }
+    // Remove the packet-only visual disguise and its interaction hitbox.
+    public void removeMobileDisguise() {
+        Player player = Bukkit.getPlayer(uuid);
+        if (player != null)
+            BLOCK_DISGUISES.undisguise(player, resolveDisguiseViewers());
         if (propHitbox != null && !propHitbox.isDead())
             propHitbox.remove();
 
-        blockDisplays.clear();
+        disguiseViewerIds.clear();
         propHitbox = null;
+        mobileFacing = null;
     }
 
     // Update the position of the block display and the interaction hitbox to match
     // the player's current location
-    public void updateMobileDisguisePosition(Player player) {
+    public void updateMobileDisguisePosition(Player player, Collection<? extends Player> viewers) {
         if (player == null)
             return;
 
-        updateDisguisePosition(player.getLocation(), player);
+        if (requiresFacingRefresh(player)) {
+            applyMobileDisguise(player, viewers);
+            return;
+        }
+
+        updateDisguisePosition(player.getLocation(), player, viewers);
+    }
+
+    private boolean requiresFacingRefresh(Player player) {
+        if (baseBlockData == null || player == null)
+            return false;
+        if (!(baseBlockData instanceof Directional)
+                && !(baseBlockData instanceof Rotatable)
+                && !(baseBlockData instanceof Orientable))
+            return false;
+
+        return mobileFacing != resolveHorizontalFace(player);
     }
 
     // Update the locked display using a fixed world anchor while keeping the
     // player's current orientation
-    public void updateLockedDisguisePosition(Location anchor, Player orientationSource) {
-        updateDisguisePosition(anchor, orientationSource);
+    public void updateLockedDisguisePosition(Location anchor, Player orientationSource,
+                                             Collection<? extends Player> viewers) {
+        updateDisguisePosition(anchor, orientationSource, viewers);
     }
 
-    private void updateDisguisePosition(Location anchorSource, Player orientationSource) {
+    private void updateDisguisePosition(Location anchorSource, Player orientationSource,
+                                        Collection<? extends Player> viewers) {
         if (chosenBlock == null || anchorSource == null || orientationSource == null)
             return;
 
-        Location anchor = toDisplayAnchor(anchorSource);
-        BlockData orientedData = createOrientedBlockData(orientationSource);
-        List<DisguisePart> parts = buildDisplayParts(orientedData);
+        BLOCK_DISGUISES.syncViewers(orientationSource, activeViewers(orientationSource, viewers));
 
-        if (blockDisplays.size() != parts.size()) {
-            // Defensive fallback: rebuild displays if part count changed unexpectedly.
-            spawnDisplay(orientationSource);
-            return;
-        }
+        if (propHitbox != null && !propHitbox.isDead())
+            propHitbox.teleport(toDisplayAnchor(anchorSource));
+    }
 
-        for (int i = 0; i < blockDisplays.size(); i++) {
-            BlockDisplay blockDisplay = blockDisplays.get(i);
-            if (blockDisplay == null || blockDisplay.isDead())
+    private List<Player> activeViewers(Player target, Collection<? extends Player> viewers) {
+        disguiseViewerIds.clear();
+        List<Player> activeViewers = new ArrayList<>();
+        if (viewers == null)
+            return activeViewers;
+
+        for (Player viewer : viewers) {
+            if (viewer == null || !viewer.isOnline()
+                    || !target.getWorld().equals(viewer.getWorld()))
                 continue;
 
-            DisguisePart part = parts.get(i);
-            blockDisplay.setBlock(part.blockData());
-            blockDisplay.setTransformation(new Transformation(
-                    new Vector3f(-0.5f + part.xOffset(), part.yOffset(), -0.5f + part.zOffset()),
-                    NO_ROTATION,
-                    new Vector3f(1f, 1f, 1f),
-                    NO_ROTATION));
-            blockDisplay.teleport(anchor);
+            disguiseViewerIds.add(viewer.getUniqueId());
+            if (viewer.equals(target) || target.getTrackedBy().contains(viewer))
+                activeViewers.add(viewer);
         }
-        if (propHitbox != null && !propHitbox.isDead())
-            propHitbox.teleport(anchor);
+        return activeViewers;
+    }
+
+    private List<Player> resolveDisguiseViewers() {
+        List<Player> viewers = new ArrayList<>();
+        for (UUID viewerId : disguiseViewerIds) {
+            Player viewer = Bukkit.getPlayer(viewerId);
+            if (viewer != null && viewer.isOnline())
+                viewers.add(viewer);
+        }
+        return viewers;
     }
 
     private Location toDisplayAnchor(Location source) {
@@ -246,12 +260,8 @@ public class HiderData {
     // Remove the disguise by deleting the display entities and restoring any world
     // block that was placed
     public void clearDisguise() {
-        removeDisplay();
+        removeMobileDisguise();
         restoreWorldBlock();
-    }
-
-    public boolean ownsDisplay(BlockDisplay display) {
-        return blockDisplays.contains(display);
     }
 
     public boolean occupiesWorldBlock(Location blockLocation) {
@@ -315,18 +325,6 @@ public class HiderData {
 
         parts.add(new DisguisePart(baseData, 0f, 0f, 0f));
         return parts;
-    }
-
-    private List<DisguisePart> buildDisplayParts(BlockData baseData) {
-        List<DisguisePart> parts = new ArrayList<>();
-        if (baseData instanceof Bed bedData) {
-            Bed foot = (Bed) bedData.clone();
-            foot.setPart(Bed.Part.FOOT);
-            parts.add(new DisguisePart(foot, 0f, 0f, 0f));
-            return parts;
-        }
-
-        return buildDisguiseParts(baseData);
     }
 
     private BlockData withHalf(BlockData source, Bisected.Half half) {

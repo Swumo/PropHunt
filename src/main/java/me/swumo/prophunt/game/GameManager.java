@@ -11,12 +11,11 @@ import net.kyori.adventure.text.Component;
 import me.swumo.prophunt.utils.GameConfigReader;
 import me.swumo.prophunt.utils.GameFormatUtils;
 import me.swumo.prophunt.utils.GameMessageUtils;
-import me.swumo.prophunt.utils.WorldBorderUtils;
+import me.swumo.prophunt.utils.ArenaBoundsUtils;
 import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.*;
-import org.bukkit.Tag;
 import org.bukkit.block.BlockFace;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
@@ -60,10 +59,12 @@ public class GameManager {
     private final Map<UUID, HiderData> hiders = new HashMap<>();
     private final Map<UUID, UUID> disguiseEntityOwners = new HashMap<>();
     private final Set<UUID> seekers = new HashSet<>();
+    private final Map<UUID, Player> displayAudience = new HashMap<>();
     private final Set<UUID> spectators = new HashSet<>();
     private OnDeathMode onDeathMode = OnDeathMode.CONVERT_TO_SEEKER;
     private boolean seekerGlowEnabled = true;
     private final Map<UUID, Location> lastLocations = new HashMap<>();
+    private final Map<UUID, Location> lastArenaPositions = new HashMap<>();
     private final Map<UUID, Location> frozenSeekers = new HashMap<>();
     private final Map<UUID, Long> lockedMovementGraceUntil = new HashMap<>();
     private final Map<UUID, Long> hiderCombatTagUntil = new HashMap<>();
@@ -80,6 +81,7 @@ public class GameManager {
     private PlatformTask countdownTask;
     private PlatformTask gameTimerTask;
     private BossBar timerBossBar;
+    private BossBar seekerReleaseBossBar;
     private int seekerGraceCountdown;
     private int gameSecondsRemaining;
 
@@ -100,6 +102,10 @@ public class GameManager {
     private String timerBossBarTitle;
     private BossBar.Color timerBossBarColor;
     private BossBar.Overlay timerBossBarOverlay;
+    private boolean seekerReleaseBossBarEnabled;
+    private String seekerReleaseBossBarTitle;
+    private BossBar.Color seekerReleaseBossBarColor;
+    private BossBar.Overlay seekerReleaseBossBarOverlay;
     private List<Integer> roundWarningSeconds = new ArrayList<>();
     private final Set<Material> blockedDisguiseBlocks = EnumSet.noneOf(Material.class);
     private final Set<Material> allowedNonSolidDisguiseBlocks = EnumSet.noneOf(Material.class);
@@ -246,7 +252,9 @@ public class GameManager {
 
         hiders.clear();
         seekers.clear();
+        displayAudience.clear();
         lastLocations.clear();
+        lastArenaPositions.clear();
         assignTeams(queuedOnlinePlayers);
         state = State.HIDING_PHASE;
 
@@ -287,13 +295,7 @@ public class GameManager {
 
         assignSeekersForRoundStart();
         assignHidersForRoundStart();
-
-        if (selectedArena != null && selectedArena.hasCuboid() && selectedArena.pos1.getWorld() != null) {
-            WorldBorderUtils.applyArenaWorldBorders(
-                    GameMessageUtils.matchRecipients(hiders.keySet(), seekers),
-                    selectedArena.pos1,
-                    selectedArena.pos2);
-        }
+        plugin.getPlatformScheduler().runGlobalLater(this::refreshMobileDisguises, 2L);
 
         PlatformScheduler scheduler = plugin.getPlatformScheduler();
 
@@ -301,12 +303,14 @@ public class GameManager {
         tickTask = scheduler.runGlobalRepeating(this::gameTick, 1L, 1L);
 
         seekerGraceCountdown = seekerGracePeriod;
+        showSeekerReleaseBossBar();
         countdownTask = scheduler.runGlobalRepeating(() -> {
             seekerGraceCountdown--;
             if (seekerGraceCountdown <= 0) {
                 countdownTask.cancel();
                 releaseSeekersPhase();
             } else {
+                refreshSeekerReleaseBossBar();
                 String countdownText;
                 String countdownTitle;
                 if (seekerGraceCountdown > countdownTitleThresholdSeconds) {
@@ -342,6 +346,7 @@ public class GameManager {
 
     private void releaseSeekersPhase() {
         state = State.SEEKING_PHASE;
+        clearSeekerReleaseBossBar();
         String prefix = msg("messages.prefix", "&6[PropHunt] &r");
         Set<UUID> participants = GameMessageUtils.matchRecipients(hiders.keySet(), seekers);
         GameMessageUtils.sendPrefixedChat(
@@ -396,6 +401,8 @@ public class GameManager {
         if (state != State.HIDING_PHASE && state != State.SEEKING_PHASE)
             return;
 
+        enforceArenaBounds();
+
         if (state == State.HIDING_PHASE) {
             for (Map.Entry<UUID, Location> entry : frozenSeekers.entrySet()) {
                 Player seeker = Bukkit.getPlayer(entry.getKey());
@@ -419,7 +426,6 @@ public class GameManager {
                 continue;
 
             if (data.isLocked()) {
-                p.setInvisible(true);
                 if (data.getPlacedBlockLocation() != null) {
                     Location anchor = data.getLockedPlayerLocation() != null
                             ? data.getLockedPlayerLocation().clone()
@@ -440,8 +446,7 @@ public class GameManager {
                 continue;
             }
 
-            p.setInvisible(true);
-            data.updateMobileDisguisePosition(p);
+            data.updateMobileDisguisePosition(p, displayAudience.values());
             if (isInBlockSelectionMenu(p)) {
                 data.resetStillTicks();
                 continue;
@@ -458,6 +463,52 @@ public class GameManager {
         }
         if (state == State.SEEKING_PHASE && hiders.isEmpty())
             endGame(false);
+    }
+
+    private void enforceArenaBounds() {
+        if (selectedArena == null || !selectedArena.hasCuboid())
+            return;
+
+        for (UUID hiderId : hiders.keySet()) {
+            Player hider = Bukkit.getPlayer(hiderId);
+            HiderData data = hiders.get(hiderId);
+            if (hider != null && hider.isOnline() && (data == null || !data.isLocked()))
+                enforceArenaBounds(hider, true);
+        }
+        for (UUID seekerId : seekers) {
+            Player seeker = Bukkit.getPlayer(seekerId);
+            if (seeker != null && seeker.isOnline())
+                enforceArenaBounds(seeker, false);
+        }
+    }
+
+    private void enforceArenaBounds(Player player, boolean hider) {
+        Location current = player.getLocation();
+        Location previous = lastArenaPositions.get(player.getUniqueId());
+        if (previous != null && sameHorizontalBlock(previous, current))
+            return;
+
+        if (ArenaBoundsUtils.isInsideHorizontalBounds(current, selectedArena.pos1, selectedArena.pos2)) {
+            lastArenaPositions.put(player.getUniqueId(), current.clone());
+            return;
+        }
+
+        Location rebound = previous != null && ArenaBoundsUtils.isInsideHorizontalBounds(
+                previous, selectedArena.pos1, selectedArena.pos2)
+                ? previous.clone()
+                : arenaReboundLocation(hider);
+        rebound.setYaw(current.getYaw());
+        rebound.setPitch(current.getPitch());
+        player.teleport(rebound);
+        lastArenaPositions.put(player.getUniqueId(), rebound.clone());
+    }
+
+    private Location arenaReboundLocation(boolean hider) {
+        List<Location> spawns = hider ? selectedArena.hiderSpawns : selectedArena.seekerSpawns;
+        if (!spawns.isEmpty())
+            return spawns.get(ThreadLocalRandom.current().nextInt(spawns.size())).clone();
+
+        return selectedArena.pos1.clone().add(0.5, 1.0, 0.5);
     }
 
     private boolean isPlayerStill(Player p) {
@@ -497,12 +548,8 @@ public class GameManager {
         p.setInvisible(true);
         data.setLockedAnchor(anchor);
         data.placeWorldBlock(anchor, p);
-        data.removeDisplay();
+        data.removeMobileDisguise();
         removeDisguiseEntityIndex(p.getUniqueId());
-
-        // While locked, remove the personal world border so border push cannot pop the
-        // hider out.
-        p.setWorldBorder(null);
 
         // Keep hiders in adventure so they remain valid spectator-teleport targets.
         p.setGameMode(GameMode.ADVENTURE);
@@ -515,8 +562,6 @@ public class GameManager {
         data.setLockedPlayerLocation(lockTp);
         p.teleport(lockTp);
         lockedMovementGraceUntil.put(p.getUniqueId(), System.currentTimeMillis() + LOCKED_HIDER_MOVEMENT_GRACE_MS);
-        hideHiderFromSeekers(p);
-
         GameMessageUtils.sendTitle(p, msg("titles.solidified.title", "&bSOLIDIFIED"),
                 msg("titles.solidified.subtitle", "&eYou are locked in place"));
         Material chosen = data.getChosenBlock();
@@ -618,6 +663,8 @@ public class GameManager {
     private boolean isValidAnchorSpace(Material mat, Material chosenBlock) {
         // Only allow placing into air-like blocks so we never replace decorations
         // such as panes, walls, fences, torches, flower pots, etc.
+        if (Tag.DOORS.isTagged(mat))
+            return false;
         if (mat.isAir())
             return true;
         if (chosenBlock == null)
@@ -773,6 +820,8 @@ public class GameManager {
         lockedMovementGraceUntil.remove(p.getUniqueId());
         Location revealLoc = data.getPlacedBlockLocation() == null ? p.getLocation()
                 : data.getPlacedBlockLocation().clone().add(0.5, 0.0, 0.5);
+        revealLoc.setYaw(p.getLocation().getYaw());
+        revealLoc.setPitch(p.getLocation().getPitch());
         data.restoreWorldBlock();
 
         p.setGameMode(GameMode.ADVENTURE);
@@ -780,18 +829,8 @@ public class GameManager {
         p.setGravity(true);
         p.teleport(revealLoc);
         p.setInvisible(true);
-        if (state == State.HIDING_PHASE || state == State.SEEKING_PHASE) {
-            if (selectedArena != null && selectedArena.hasCuboid() && selectedArena.pos1.getWorld() != null) {
-                WorldBorderUtils.applyArenaWorldBorder(
-                        p,
-                        selectedArena.pos1,
-                    selectedArena.pos2);
-            }
-        }
-
-        data.spawnDisplay(p);
+        data.applyMobileDisguise(p, displayAudience.values());
         indexDisguiseEntities(p.getUniqueId(), data);
-        hideHiderFromSeekers(p);
         GameMessageUtils.sendTitle(p, msg("titles.unlocked.title", "&eUNLOCKED"),
                 msg("titles.unlocked.subtitle", "&aKeep moving"));
     }
@@ -811,15 +850,6 @@ public class GameManager {
         applyHiderHit(seeker, hider.getUniqueId());
     }
 
-    public void handleHiderHit(Player seeker, org.bukkit.entity.BlockDisplay display) {
-        if (state != State.SEEKING_PHASE)
-            return;
-        UUID targetUUID = getDisguiseEntityOwner(display.getUniqueId(), display);
-        if (targetUUID == null)
-            return;
-        applyHiderHit(seeker, targetUUID);
-    }
-
     public void handleHiderHit(Player seeker, Interaction hitbox) {
         if (state != State.SEEKING_PHASE)
             return;
@@ -835,9 +865,7 @@ public class GameManager {
             return null;
 
         HiderData data = hiders.get(hiderId);
-        boolean ownsEntity = entity instanceof org.bukkit.entity.BlockDisplay display
-                ? data != null && data.ownsDisplay(display)
-                : entity instanceof Interaction hitbox && data != null && hitbox.equals(data.getPropHitbox());
+        boolean ownsEntity = entity instanceof Interaction hitbox && data != null && hitbox.equals(data.getPropHitbox());
         if (ownsEntity)
             return hiderId;
 
@@ -847,9 +875,6 @@ public class GameManager {
 
     private void indexDisguiseEntities(UUID hiderId, HiderData data) {
         removeDisguiseEntityIndex(hiderId);
-        for (org.bukkit.entity.BlockDisplay display : data.getBlockDisplays()) {
-            disguiseEntityOwners.put(display.getUniqueId(), hiderId);
-        }
         Interaction hitbox = data.getPropHitbox();
         if (hitbox != null)
             disguiseEntityOwners.put(hitbox.getUniqueId(), hiderId);
@@ -917,9 +942,7 @@ public class GameManager {
             if (hider != null) {
                 removeHiderMenuItem(hider);
                 removePlayerFromCollisionTeams(hider);
-                showHiderToSeekers(hider);
                 hider.setInvisible(false);
-                hider.setWorldBorder(null);
                 hider.setGameMode(GameMode.SPECTATOR);
                 GameMessageUtils.sendTitle(hider,
                         msg("titles.found.title", "&cYou Were Found"),
@@ -933,7 +956,6 @@ public class GameManager {
 
             if (hider != null) {
                 applyPromotedSeekerLoadoutAndVisibility(hider);
-                showSeekerToHiders(hider);
                 if (isFinalMinuteBlockSwapLocked()) {
                     messageRemainingBlocksToSeekers(Set.of(hider.getUniqueId()));
                 }
@@ -990,7 +1012,6 @@ public class GameManager {
             if (p != null) {
                 removeHiderMenuItem(p);
                 removePlayerFromCollisionTeams(p);
-                showHiderToSeekers(p);
                 resetPlayerAfterGame(p, GameMode.ADVENTURE);
             }
         }
@@ -1016,18 +1037,20 @@ public class GameManager {
     }
 
     private void cleanup() {
-        WorldBorderUtils.clearWorldBorders(GameMessageUtils.matchRecipients(hiders.keySet(), seekers));
         unregisterCollisionTeams();
         hiders.clear();
         disguiseEntityOwners.clear();
         seekers.clear();
+        displayAudience.clear();
         spectators.clear();
         lastLocations.clear();
+        lastArenaPositions.clear();
         frozenSeekers.clear();
         lockedMovementGraceUntil.clear();
         hiderCombatTagUntil.clear();
         cannotSolidifyMessageUntil.clear();
         clearTimerBossBar();
+        clearSeekerReleaseBossBar();
         blockSelectionMenuPlayers.clear();
         seekerGraceCountdown = 0;
         gameSecondsRemaining = 0;
@@ -1059,7 +1082,6 @@ public class GameManager {
             if (p != null) {
                 removeHiderMenuItem(p);
                 removePlayerFromCollisionTeams(p);
-                showHiderToSeekers(p);
                 resetPlayerAfterGame(p, GameMode.ADVENTURE);
             }
         }
@@ -1104,6 +1126,8 @@ public class GameManager {
 
         hiders.remove(p.getUniqueId());
         seekers.remove(p.getUniqueId());
+        displayAudience.remove(p.getUniqueId());
+        lastArenaPositions.remove(p.getUniqueId());
         queuedPlayers.remove(p.getUniqueId());
         forcedSeekersInQueue.remove(p.getUniqueId());
         frozenSeekers.remove(p.getUniqueId());
@@ -1116,9 +1140,10 @@ public class GameManager {
         removePlayerFromCollisionTeams(p);
         restoreSeekerVisualWeapon(p);
         p.setGlowing(false);
-        p.setWorldBorder(null);
         if (timerBossBar != null)
             p.hideBossBar(timerBossBar);
+        if (seekerReleaseBossBar != null)
+            p.hideBossBar(seekerReleaseBossBar);
         resetPlayerAfterGame(p, GameMode.ADVENTURE);
 
         if (!activeGame || (!wasHider && !wasSeeker))
@@ -1155,16 +1180,14 @@ public class GameManager {
 
     public void handlePlayerJoin(Player player) {
         UUID playerId = player.getUniqueId();
-        if (hiders.containsKey(playerId) || seekers.contains(playerId) || spectators.contains(playerId))
+        if (hiders.containsKey(playerId) || seekers.contains(playerId)) {
+            displayAudience.put(playerId, player);
+            return;
+        }
+        if (spectators.contains(playerId))
             return;
 
         resetPlayerAfterGame(player, GameMode.ADVENTURE);
-        for (Player onlinePlayer : Bukkit.getOnlinePlayers()) {
-            if (!onlinePlayer.equals(player)) {
-                onlinePlayer.showPlayer(plugin, player);
-                player.showPlayer(plugin, onlinePlayer);
-            }
-        }
     }
 
     private void assignPlayerToNoCollisionTeam(Player player, boolean hiderRole) {
@@ -1257,67 +1280,19 @@ public class GameManager {
         }
     }
 
-    private void hideHiderFromSeekers(Player hider) {
-        if (hider == null)
+    private void refreshMobileDisguises() {
+        if (state != State.HIDING_PHASE && state != State.SEEKING_PHASE)
             return;
 
-        for (UUID sid : seekers) {
-            Player seeker = Bukkit.getPlayer(sid);
-            if (seeker == null || !seeker.isOnline())
+        for (Map.Entry<UUID, HiderData> entry : hiders.entrySet()) {
+            HiderData data = entry.getValue();
+            if (data.isLocked())
                 continue;
 
-            seeker.hidePlayer(plugin, hider);
-        }
-    }
-
-    private void showHiderToSeekers(Player hider) {
-        if (hider == null)
-            return;
-
-        for (UUID sid : seekers) {
-            Player seeker = Bukkit.getPlayer(sid);
-            if (seeker == null || !seeker.isOnline())
-                continue;
-
-            seeker.showPlayer(plugin, hider);
-        }
-    }
-
-    private void hideAllHidersFromSeeker(Player seeker) {
-        if (seeker == null)
-            return;
-
-        for (UUID hiderId : hiders.keySet()) {
-            Player hider = Bukkit.getPlayer(hiderId);
-            if (hider == null || !hider.isOnline())
-                continue;
-
-            seeker.hidePlayer(plugin, hider);
-        }
-    }
-
-    private void hideHiderFromOtherHiders(Player hider) {
-        if (hider == null)
-            return;
-
-        for (UUID hiderId : hiders.keySet()) {
-            Player otherHider = Bukkit.getPlayer(hiderId);
-            if (otherHider == null || !otherHider.isOnline() || otherHider.equals(hider))
-                continue;
-
-            otherHider.hidePlayer(plugin, hider);
-            hider.hidePlayer(plugin, otherHider);
-        }
-    }
-
-    private void showSeekerToHiders(Player seeker) {
-        if (seeker == null)
-            return;
-
-        for (UUID hiderId : hiders.keySet()) {
-            Player hider = Bukkit.getPlayer(hiderId);
+            Player hider = Bukkit.getPlayer(entry.getKey());
             if (hider != null && hider.isOnline()) {
-                hider.showPlayer(plugin, seeker);
+                data.applyMobileDisguise(hider, displayAudience.values());
+                indexDisguiseEntities(hider.getUniqueId(), data);
             }
         }
     }
@@ -1647,8 +1622,6 @@ public class GameManager {
         assignPlayerToNoCollisionTeam(player, true);
         giveHiderMenuItem(player);
         assignRandomBlock(player);
-        hideHiderFromSeekers(player);
-        hideHiderFromOtherHiders(player);
         GameMessageUtils.sendTitle(player,
                 msg("titles.hider-role.title", "&aYou are a HIDER"),
                 msg("titles.hider-role.subtitle", "&eStand still to solidify before release"));
@@ -1699,13 +1672,16 @@ public class GameManager {
 
     private void assignPlayerToSeekerTeam(UUID playerId) {
         seekers.add(playerId);
+        addToDisplayAudience(playerId);
     }
 
     private void assignPlayerToHiderTeam(UUID playerId) {
         hiders.put(playerId, new HiderData(playerId, hiderMaxHp));
+        addToDisplayAudience(playerId);
     }
 
     private HiderData removePlayerFromHiderTeam(UUID playerId) {
+        displayAudience.remove(playerId);
         return hiders.remove(playerId);
     }
 
@@ -1866,19 +1842,10 @@ public class GameManager {
         target.setAllowFlight(false);
         target.setGravity(true);
         if (seekerGlowEnabled) target.setGlowing(true);
-        showHiderToSeekers(target);
         if (selectedArena != null && !selectedArena.seekerSpawns.isEmpty()) {
             teleportToRandomSpawn(target, selectedArena.seekerSpawns);
         }
-        if (selectedArena != null && selectedArena.hasCuboid() && selectedArena.pos1.getWorld() != null) {
-            WorldBorderUtils.applyArenaWorldBorder(
-                    target,
-                    selectedArena.pos1,
-                    selectedArena.pos2);
-        }
-
         giveSeekerVisualWeapon(target);
-        hideAllHidersFromSeeker(target);
     }
 
     private List<Player> getQueuedOnlinePlayers() {
@@ -1944,7 +1911,7 @@ public class GameManager {
         }
         data.setChosenBlock(block);
         data.clearDisguise();
-        data.spawnDisplay(p);
+        data.applyMobileDisguise(p, displayAudience.values());
         indexDisguiseEntities(p.getUniqueId(), data);
 
         if (sendDisguisedAsMessage) {
@@ -2101,6 +2068,15 @@ public class GameManager {
                 && a.getBlockZ() == b.getBlockZ();
     }
 
+    private boolean sameHorizontalBlock(Location a, Location b) {
+        if (a == null || b == null || a.getWorld() == null || b.getWorld() == null)
+            return false;
+        if (!a.getWorld().equals(b.getWorld()))
+            return false;
+
+        return a.getBlockX() == b.getBlockX() && a.getBlockZ() == b.getBlockZ();
+    }
+
     private double horizontalDistanceSquaredFromAnchor(Location current, Location anchor) {
         if (current == null || anchor == null)
             return Double.MAX_VALUE;
@@ -2159,6 +2135,12 @@ public class GameManager {
 
     public Set<UUID> getSeekers() {
         return Collections.unmodifiableSet(seekers);
+    }
+
+    private void addToDisplayAudience(UUID playerId) {
+        Player player = Bukkit.getPlayer(playerId);
+        if (player != null && player.isOnline())
+            displayAudience.put(playerId, player);
     }
 
     public HiderData getHiderData(UUID uuid) {
@@ -2279,6 +2261,13 @@ public class GameManager {
         timerBossBarColor = readBossBarColor(config.getString("gameplay.timer-boss-bar.color"), BossBar.Color.YELLOW);
         timerBossBarOverlay = readBossBarOverlay(config.getString("gameplay.timer-boss-bar.overlay"),
             BossBar.Overlay.PROGRESS);
+        seekerReleaseBossBarEnabled = config.getBoolean("gameplay.seeker-release-boss-bar.enabled", true);
+        seekerReleaseBossBarTitle = config.getString("gameplay.seeker-release-boss-bar.title",
+            "<red>Seekers releasing in:</red> <yellow>{time}</yellow>");
+        seekerReleaseBossBarColor = readBossBarColor(config.getString("gameplay.seeker-release-boss-bar.color"),
+            BossBar.Color.RED);
+        seekerReleaseBossBarOverlay = readBossBarOverlay(config.getString("gameplay.seeker-release-boss-bar.overlay"),
+            BossBar.Overlay.PROGRESS);
         roundWarningSeconds = GameConfigReader.intListSetting(config, "gameplay.round-warning-seconds",
                 Arrays.asList(300, 60));
         blockedDisguiseBlocks.clear();
@@ -2394,6 +2383,58 @@ public class GameManager {
             onlinePlayer.hideBossBar(timerBossBar);
         }
         timerBossBar = null;
+    }
+
+    private void showSeekerReleaseBossBar() {
+        clearSeekerReleaseBossBar();
+        if (!seekerReleaseBossBarEnabled)
+            return;
+
+        seekerReleaseBossBar = BossBar.bossBar(seekerReleaseBossBarName(), seekerReleaseBossBarProgress(),
+                seekerReleaseBossBarColor, seekerReleaseBossBarOverlay);
+        for (UUID hiderId : hiders.keySet()) {
+            Player hider = Bukkit.getPlayer(hiderId);
+            if (hider != null && hider.isOnline())
+                hider.showBossBar(seekerReleaseBossBar);
+        }
+    }
+
+    private void refreshSeekerReleaseBossBar() {
+        if (!seekerReleaseBossBarEnabled) {
+            clearSeekerReleaseBossBar();
+            return;
+        }
+        if (seekerReleaseBossBar == null) {
+            showSeekerReleaseBossBar();
+            return;
+        }
+
+        seekerReleaseBossBar.name(seekerReleaseBossBarName());
+        seekerReleaseBossBar.progress(seekerReleaseBossBarProgress());
+        seekerReleaseBossBar.color(seekerReleaseBossBarColor);
+        seekerReleaseBossBar.overlay(seekerReleaseBossBarOverlay);
+    }
+
+    private net.kyori.adventure.text.Component seekerReleaseBossBarName() {
+        String title = seekerReleaseBossBarTitle.replace("{time}",
+            GameFormatUtils.formatRemainingTime(seekerGraceCountdown));
+        return MiniMessage.miniMessage().deserialize(title);
+    }
+
+    private float seekerReleaseBossBarProgress() {
+        if (seekerGracePeriod <= 0)
+            return 0f;
+        return Math.clamp((float) seekerGraceCountdown / seekerGracePeriod, 0f, 1f);
+    }
+
+    private void clearSeekerReleaseBossBar() {
+        if (seekerReleaseBossBar == null)
+            return;
+
+        for (Player onlinePlayer : Bukkit.getOnlinePlayers()) {
+            onlinePlayer.hideBossBar(seekerReleaseBossBar);
+        }
+        seekerReleaseBossBar = null;
     }
 
     private Sound readSound(String configuredSound, Sound fallback) {

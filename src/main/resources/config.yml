@@ -26,6 +26,14 @@ gameplay:
         color: YELLOW
         overlay: PROGRESS
 
+    # Hider-only countdown shown while seekers are frozen.
+    # Use {time} in the title for the remaining seeker grace time.
+    seeker-release-boss-bar:
+        enabled: true
+        title: "<red>Seekers releasing in:</red> <yellow>{time}</yellow>"
+        color: RED
+        overlay: PROGRESS
+
     # Maximum number of blocks sampled from the selected arena cuboid when building
     # the random hider block pool. Higher values are more accurate but heavier.
     arena-scan-max-blocks: 120000

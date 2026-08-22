@@ -1,6 +1,9 @@
 package me.swumo.prophunt;
 
+import io.github.retrooper.packetevents.factory.spigot.SpigotPacketEventsBuilder;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
+
+import com.github.retrooper.packetevents.manager.protocol.ProtocolManager;
 import lombok.Getter;
 import me.swumo.prophunt.commands.PropHuntCommand;
 import me.swumo.prophunt.game.GameManager;
@@ -18,6 +21,10 @@ import org.incendo.cloud.annotations.AnnotationParser;
 import org.incendo.cloud.execution.ExecutionCoordinator;
 import org.incendo.cloud.minecraft.extras.MinecraftHelp;
 import org.incendo.cloud.paper.PaperCommandManager;
+
+import com.github.retrooper.packetevents.PacketEvents;
+import com.github.retrooper.packetevents.util.TimeStampMode;
+
 import xyz.xenondevs.invui.InvUI;
 
 import java.io.File;
@@ -32,12 +39,15 @@ public class PropHunt extends JavaPlugin {
     @Getter private static PropHunt instance;
     @Getter private GameManager gameManager;
     @Getter private PlatformScheduler platformScheduler;
+    @Getter public ProtocolManager protocolManager;
     private File arenaConfigFile;
     private FileConfiguration arenaConfig;
 
     @Override
     public void onEnable() {
         instance = this;
+        PacketEvents.getAPI().init();
+        protocolManager = PacketEvents.getAPI().getProtocolManager();
         saveDefaultConfig();
         mergeMissingConfigDefaults();
         setupArenaConfig();
@@ -48,6 +58,13 @@ public class PropHunt extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new GameListeners(this), this);
         registerCommands();
         getLogger().info("PropHunt enabled.");
+    }
+
+    @Override
+    public void onLoad() {
+        PacketEvents.setAPI(SpigotPacketEventsBuilder.build(this));
+        PacketEvents.getAPI().getSettings().checkForUpdates(true).debug(false).timeStampMode(TimeStampMode.MILLIS);
+        PacketEvents.getAPI().load();
     }
 
     private void registerCommands() {
@@ -67,6 +84,7 @@ public class PropHunt extends JavaPlugin {
     public void onDisable() {
         if (gameManager != null)
             gameManager.forceStop();
+        PacketEvents.getAPI().terminate();
         getLogger().info("PropHunt disabled.");
     }
 

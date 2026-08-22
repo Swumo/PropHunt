@@ -125,4 +125,7 @@ target/
 .classpath
 .project
 
+# VS Code
+.vscode/
+
 ignore/

@@ -8,3 +8,10 @@ permissions:
     prophunt.admin:
         description: Admin control of PropHunt games
         default: op
+softdepend:
+- ProtocolLib
+- ProtocolSupport
+- ViaVersion
+- ViaBackwards
+- ViaRewind
+- Geyser-Spigot
