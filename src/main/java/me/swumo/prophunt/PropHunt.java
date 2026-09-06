@@ -33,8 +33,12 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class PropHunt extends JavaPlugin {
+
+    private static final Pattern LEGACY_FORMAT_CODE = Pattern.compile("(?i)&([0-9a-fk-or])");
 
     @Getter private static PropHunt instance;
     @Getter private GameManager gameManager;
@@ -242,7 +246,7 @@ public class PropHunt extends JavaPlugin {
     }
 
     public Component deserializeMiniMessage(String message) {
-        return MiniMessage.miniMessage().deserialize(message == null ? "" : message);
+        return MiniMessage.miniMessage().deserialize(legacyCodesToMiniMessage(message));
     }
 
     public List<String> getConfigTextList(String path, List<String> fallback) {
@@ -260,6 +264,44 @@ public class PropHunt extends JavaPlugin {
             formatted = formatted.replace("{" + entry.getKey() + "}", String.valueOf(entry.getValue()));
         }
         return formatted;
+    }
+
+    private String legacyCodesToMiniMessage(String message) {
+        Matcher matcher = LEGACY_FORMAT_CODE.matcher(message == null ? "" : message);
+        StringBuffer formatted = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(formatted, Matcher.quoteReplacement(legacyCodeTag(matcher.group(1).charAt(0))));
+        }
+        matcher.appendTail(formatted);
+        return formatted.toString();
+    }
+
+    private String legacyCodeTag(char code) {
+        return switch (Character.toLowerCase(code)) {
+            case '0' -> "<black>";
+            case '1' -> "<dark_blue>";
+            case '2' -> "<dark_green>";
+            case '3' -> "<dark_aqua>";
+            case '4' -> "<dark_red>";
+            case '5' -> "<dark_purple>";
+            case '6' -> "<gold>";
+            case '7' -> "<gray>";
+            case '8' -> "<dark_gray>";
+            case '9' -> "<blue>";
+            case 'a' -> "<green>";
+            case 'b' -> "<aqua>";
+            case 'c' -> "<red>";
+            case 'd' -> "<light_purple>";
+            case 'e' -> "<yellow>";
+            case 'f' -> "<white>";
+            case 'k' -> "<obfuscated>";
+            case 'l' -> "<bold>";
+            case 'm' -> "<strikethrough>";
+            case 'n' -> "<underlined>";
+            case 'o' -> "<italic>";
+            case 'r' -> "<reset>";
+            default -> "";
+        };
     }
 
     private boolean useCommandPrefix() {

@@ -238,6 +238,18 @@ public class PropHuntCommand {
         send(stack.getSender(), plugin.applyCommandPrefix(plugin.getGameManager().arenaInfo(name)));
     }
 
+    @Command("prophunt|ph arena border <name>")
+    @CommandDescription("Toggle a client-side border preview for an arena.")
+    @Permission("prophunt.admin")
+    public void arenaBorder(CommandSourceStack stack,
+            @Argument(value = "name", suggestions = "arena_names") String name) {
+        if (!(stack.getSender() instanceof Player player)) {
+            send(stack.getSender(), plugin.getCommandConfigText("messages.errors.players-only", "&cPlayers only."));
+            return;
+        }
+        send(player, plugin.applyCommandPrefix(plugin.getGameManager().toggleArenaBorder(player, name)));
+    }
+
     @Command("prophunt|ph arena pos1 <name>")
     @CommandDescription("Set the first cuboid corner of an arena.")
     @Permission("prophunt.admin")

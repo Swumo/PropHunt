@@ -7,6 +7,7 @@ import me.swumo.prophunt.platform.PlatformScheduler;
 import me.swumo.prophunt.platform.PlatformScheduler.PlatformTask;
 import me.swumo.prophunt.utils.ArenaUtils;
 import me.swumo.prophunt.utils.ArenaUtils.ArenaRuntime;
+import me.swumo.prophunt.utils.BlockDisguiseManager;
 import net.kyori.adventure.text.Component;
 import me.swumo.prophunt.utils.GameConfigReader;
 import me.swumo.prophunt.utils.GameFormatUtils;
@@ -75,6 +76,7 @@ public class GameManager {
     private final Set<UUID> forcedSeekersInQueue = new HashSet<>();
     private final List<Material> currentArenaBlockPool = new ArrayList<>();
     private final Map<String, ArenaRuntime> arenaRuntimeCache = new HashMap<>();
+    private final BlockDisguiseManager arenaBorderDisplays = new BlockDisguiseManager();
     private boolean queueOpen;
     private ArenaRuntime selectedArena;
     private PlatformTask tickTask;
@@ -665,6 +667,8 @@ public class GameManager {
         // such as panes, walls, fences, torches, flower pots, etc.
         if (Tag.DOORS.isTagged(mat))
             return false;
+        if (Tag.SLABS.isTagged(mat))
+            return false;
         if (mat.isAir())
             return true;
         if (chosenBlock == null)
@@ -756,6 +760,8 @@ public class GameManager {
 
     private boolean isValidFloorBlock(Material mat) {
         if (!mat.isSolid() || mat.isAir())
+            return false;
+        if (Tag.SLABS.isTagged(mat))
             return false;
         if (Tag.PRESSURE_PLATES.isTagged(mat) || Tag.BUTTONS.isTagged(mat) || mat == Material.LEVER)
             return false;
@@ -1415,9 +1421,25 @@ public class GameManager {
                 "&6Arena {arena}&7 | cuboid={cuboid} | hiderSpawns={hiders} | seekerSpawns={seekers}",
                 Map.of(
                         "arena", info.key(),
-                        "cuboid", info.hasPos1() && info.hasPos2(),
+                        "cuboid", "(" + info.pos1().toBlockLocation().toString() + " -> " + info.pos2().toBlockLocation().toString() + ")",
                         "hiders", info.hiderSpawnCount(),
                         "seekers", info.seekerSpawnCount()));
+    }
+
+    public String toggleArenaBorder(Player viewer, String name) {
+        String key = ArenaUtils.normalizeArenaName(name);
+        for (ArenaUtils.ArenaDefinition arena : ArenaUtils.loadArenas(plugin.getArenaConfig())) {
+            if (!arena.name().equals(key))
+                continue;
+            if (!arena.hasCuboid())
+                return "&cSet pos1 and pos2 for this arena before showing its border.";
+
+            boolean shown = arenaBorderDisplays.toggleArenaBorder(viewer, arena.pos1(), arena.pos2());
+            return shown
+                    ? "&aShowing the arena border. Run the command again to hide it."
+                    : "&eArena border hidden.";
+        }
+        return msg("messages.arena.not-found", "&cArena not found: {arena}", Map.of("arena", key));
     }
 
     private String setArenaPos(Player player, String name, String posKey) {

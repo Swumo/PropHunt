@@ -65,6 +65,8 @@ public final class ArenaUtils {
             boolean exists,
             boolean hasPos1,
             boolean hasPos2,
+            Location pos1,
+            Location pos2,
             int hiderSpawnCount,
             int seekerSpawnCount) {
     }
@@ -208,13 +210,15 @@ public final class ArenaUtils {
         String key = normalizeArenaName(name);
         ConfigurationSection sec = cfg.getConfigurationSection("arenas." + key);
         if (sec == null)
-            return new ArenaInfo(key, false, false, false, 0, 0);
+            return new ArenaInfo(key, false, false, false, null, null, 0, 0);
 
         return new ArenaInfo(
                 key,
                 true,
                 sec.isConfigurationSection("pos1"),
                 sec.isConfigurationSection("pos2"),
+                readLocation(sec.getConfigurationSection("pos1"), sec.getString("world")),
+                readLocation(sec.getConfigurationSection("pos2"), sec.getString("world")),
                 sec.getMapList("hider-spawns").size(),
                 sec.getMapList("seeker-spawns").size());
     }

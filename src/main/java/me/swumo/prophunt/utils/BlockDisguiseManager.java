@@ -4,10 +4,13 @@ import com.github.retrooper.packetevents.PacketEvents;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
+import com.github.retrooper.packetevents.protocol.player.Equipment;
+import com.github.retrooper.packetevents.protocol.player.EquipmentSlot;
 import com.github.retrooper.packetevents.protocol.world.states.WrappedBlockState;
 import com.github.retrooper.packetevents.util.Vector3d;
 import com.github.retrooper.packetevents.util.Vector3f;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDestroyEntities;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityEquipment;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSetPassengers;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnEntity;
@@ -23,8 +26,12 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
  
 /**
  * Much love to Kint for sharing <3
@@ -53,12 +60,14 @@ public final class BlockDisguiseManager {
     final int translation;
     final int scale;
     final int billboard;
+    final int viewRange;
     final int blockState;
  
-    DisplayIndices(int translation, int scale, int billboard, int blockState) {
+    DisplayIndices(int translation, int scale, int billboard, int viewRange, int blockState) {
       this.translation = translation;
       this.scale = scale;
       this.billboard = billboard;
+      this.viewRange = viewRange;
       this.blockState = blockState;
     }
   }
@@ -71,11 +80,15 @@ public final class BlockDisguiseManager {
   // Minecraft positions passengers above a player; offset the display back to the
   // player's feet so the block occupies the normal disguise location.
   private static final float PLAYER_PASSENGER_FEET_OFFSET = -1.75f;
+  private static final float ARENA_BORDER_HEIGHT = 30f;
  
   private final DisplayIndices indices;
  
   /** Real player UUID -> the active fake display and its recipient state. */
   private final Map<UUID, ActiveDisguise> activeDisguises = new HashMap<>();
+
+  /** Viewer UUID -> the four client-side display ids used for an arena border. */
+  private final Map<UUID, int[]> activeArenaBorders = new HashMap<>();
 
   /** One visual block in a mounted disguise, positioned relative to the player. */
   public record Part(BlockData block, float xOffset, float yOffset, float zOffset) {}
@@ -107,9 +120,10 @@ public final class BlockDisguiseManager {
       int translation = accessorId(display, "DATA_TRANSLATION_ID");
       int scale = accessorId(display, "DATA_SCALE_ID");
       int billboard = accessorId(display, "DATA_BILLBOARD_RENDER_CONSTRAINTS_ID");
+      int viewRange = accessorId(display, "DATA_VIEW_RANGE_ID");
       int blockState = accessorId(blockDisplay, "DATA_BLOCK_STATE_ID");
  
-      return new DisplayIndices(translation, scale, billboard, blockState);
+      return new DisplayIndices(translation, scale, billboard, viewRange, blockState);
     } catch (ReflectiveOperationException e) {
       throw new IllegalStateException(
           "Could not resolve Display metadata indices from NMS. "
@@ -232,6 +246,62 @@ public final class BlockDisguiseManager {
       PacketEvents.getAPI()
           .getPlayerManager()
           .sendPacket(viewer, new WrapperPlayServerDestroyEntities(disguise.entityIds()));
+      restorePlayerEquipment(viewer, target);
+    }
+  }
+
+  /**
+   * Shows a red stained-glass-pane border around a cuboid for one viewer, or
+   * removes that viewer's existing border when invoked again.
+   *
+   * @return {@code true} when the border was shown, {@code false} when it was removed
+   */
+  public boolean toggleArenaBorder(Player viewer, Location pos1, Location pos2) {
+    if (clearArenaBorder(viewer)) {
+      return false;
+    }
+
+    int minX = Math.min(pos1.getBlockX(), pos2.getBlockX());
+    int maxX = Math.max(pos1.getBlockX(), pos2.getBlockX());
+    int minY = Math.min(pos1.getBlockY(), pos2.getBlockY());
+    int minZ = Math.min(pos1.getBlockZ(), pos2.getBlockZ());
+    int maxZ = Math.max(pos1.getBlockZ(), pos2.getBlockZ());
+    float width = maxX - minX + 1;
+    float depth = maxZ - minZ + 1;
+
+    int[] displayIds = {nextEntityId(), nextEntityId(), nextEntityId(), nextEntityId()};
+    activeArenaBorders.put(viewer.getUniqueId(), displayIds);
+
+    BlockData glass = Material.RED_STAINED_GLASS.createBlockData();
+    sendBorderDisplay(viewer, displayIds[0], new Location(pos1.getWorld(), minX, minY, minZ), glass,
+      new Vector3f(width, ARENA_BORDER_HEIGHT, 0.125f));
+    sendBorderDisplay(viewer, displayIds[1], new Location(pos1.getWorld(), minX, minY, maxZ + 1), glass,
+      new Vector3f(width, ARENA_BORDER_HEIGHT, 0.125f));
+    sendBorderDisplay(viewer, displayIds[2], new Location(pos1.getWorld(), minX, minY, minZ), glass,
+      new Vector3f(0.125f, ARENA_BORDER_HEIGHT, depth));
+    sendBorderDisplay(viewer, displayIds[3], new Location(pos1.getWorld(), maxX + 1, minY, minZ), glass,
+      new Vector3f(0.125f, ARENA_BORDER_HEIGHT, depth));
+    return true;
+  }
+
+  public boolean clearArenaBorder(Player viewer) {
+    int[] displayIds = activeArenaBorders.remove(viewer.getUniqueId());
+    if (displayIds == null) {
+      return false;
+    }
+    PacketEvents.getAPI().getPlayerManager()
+        .sendPacket(viewer, new WrapperPlayServerDestroyEntities(displayIds));
+    return true;
+  }
+
+  public void clearAllArenaBorders() {
+    for (UUID viewerId : new ArrayList<>(activeArenaBorders.keySet())) {
+      Player viewer = Bukkit.getPlayer(viewerId);
+      if (viewer != null && viewer.isOnline()) {
+        clearArenaBorder(viewer);
+      } else {
+        activeArenaBorders.remove(viewerId);
+      }
     }
   }
  
@@ -243,9 +313,11 @@ public final class BlockDisguiseManager {
     // Spawn position is largely cosmetic — the mount packet overrides it
     // immediately — but sending the target's real position avoids a one-frame
     // pop if the mount packet arrives late.
-    Vector3d pos =
-        new Vector3d(
-            target.getLocation().getX(), target.getLocation().getY(), target.getLocation().getZ());
+    sendSpawn(viewer, target.getLocation(), displayId);
+  }
+
+  private void sendSpawn(Player viewer, Location location, int displayId) {
+    Vector3d pos = new Vector3d(location.getX(), location.getY(), location.getZ());
  
     WrapperPlayServerSpawnEntity spawn =
         new WrapperPlayServerSpawnEntity(
@@ -263,34 +335,35 @@ public final class BlockDisguiseManager {
   }
  
   private void sendDisplayMetadata(Player viewer, int displayId, Part part) {
-    WrappedBlockState state = SpigotConversionUtil.fromBukkitBlockData(part.block());
- 
+    sendDisplayMetadata(viewer, displayId, part.block(), new Vector3f(
+        -0.5f + part.xOffset(),
+        PLAYER_PASSENGER_FEET_OFFSET + part.yOffset(),
+        -0.5f + part.zOffset()), new Vector3f(1.0f, 1.0f, 1.0f));
+  }
+
+  private void sendBorderDisplay(Player viewer, int displayId, Location location, BlockData block,
+      Vector3f scale) {
+    sendSpawn(viewer, location, displayId);
+    sendDisplayMetadata(viewer, displayId, block, new Vector3f(0f, 0f, 0f), scale, 128f);
+  }
+
+  private void sendDisplayMetadata(Player viewer, int displayId, BlockData block,
+      Vector3f translation, Vector3f scale) {
+    sendDisplayMetadata(viewer, displayId, block, translation, scale, null);
+  }
+
+  private void sendDisplayMetadata(Player viewer, int displayId, BlockData block,
+      Vector3f translation, Vector3f scale, Float viewRange) {
+    WrappedBlockState state = SpigotConversionUtil.fromBukkitBlockData(block);
     List<EntityData<?>> data = new ArrayList<>();
- 
-    // Block state. Note the *payload* is a global palette id, which also drifts
-    // between versions — but ViaVersion remaps it for downlevel clients as long
-    // as it saw the spawn packet above and tracked this entity as a BlockDisplay.
     data.add(new EntityData<>(indices.blockState, EntityDataTypes.BLOCK_STATE, state.getGlobalId()));
- 
-    // Blocks render from their min corner, so shift back half a block on X/Z to
-    // centre the model on the player, and drop it to foot level.
-    data.add(
-        new EntityData<>(
-            indices.translation,
-            EntityDataTypes.VECTOR3F,
-            new Vector3f(
-              -0.5f + part.xOffset(),
-              PLAYER_PASSENGER_FEET_OFFSET + part.yOffset(),
-              -0.5f + part.zOffset())));
- 
-    data.add(
-        new EntityData<>(indices.scale, EntityDataTypes.VECTOR3F, new Vector3f(1.0f, 1.0f, 1.0f)));
- 
-    // 0 = FIXED. The block should rotate with the player, not face the camera.
+    data.add(new EntityData<>(indices.translation, EntityDataTypes.VECTOR3F, translation));
+    data.add(new EntityData<>(indices.scale, EntityDataTypes.VECTOR3F, scale));
     data.add(new EntityData<>(indices.billboard, EntityDataTypes.BYTE, (byte) 0));
- 
-    PacketEvents.getAPI()
-        .getPlayerManager()
+    if (viewRange != null) {
+      data.add(new EntityData<>(indices.viewRange, EntityDataTypes.FLOAT, viewRange));
+    }
+    PacketEvents.getAPI().getPlayerManager()
         .sendPacket(viewer, new WrapperPlayServerEntityMetadata(displayId, data));
   }
  
@@ -307,6 +380,7 @@ public final class BlockDisguiseManager {
     }
     sendMount(viewer, target.getEntityId(), disguise.entityIds());
     setPlayerInvisible(viewer, target, true);
+    hidePlayerEquipment(viewer, target);
   }
  
   /**
@@ -324,6 +398,39 @@ public final class BlockDisguiseManager {
     PacketEvents.getAPI()
         .getPlayerManager()
         .sendPacket(viewer, new WrapperPlayServerEntityMetadata(target.getEntityId(), data));
+  }
+
+  private void hidePlayerEquipment(Player viewer, Player target) {
+    if (viewer.equals(target)) {
+      return;
+    }
+    sendPlayerEquipment(viewer, target, new ItemStack(org.bukkit.Material.AIR));
+  }
+
+  private void restorePlayerEquipment(Player viewer, Player target) {
+    if (viewer.equals(target)) {
+      return;
+    }
+    sendPlayerEquipment(viewer, target, null);
+  }
+
+  private void sendPlayerEquipment(Player viewer, Player target, ItemStack replacement) {
+    org.bukkit.inventory.PlayerInventory inventory = target.getInventory();
+    List<Equipment> equipment = List.of(
+        new Equipment(EquipmentSlot.MAIN_HAND, toProtocolItem(replacement, inventory.getItemInMainHand())),
+        new Equipment(EquipmentSlot.OFF_HAND, toProtocolItem(replacement, inventory.getItemInOffHand())),
+      new Equipment(EquipmentSlot.BOOTS, toProtocolItem(replacement, inventory.getBoots())),
+      new Equipment(EquipmentSlot.LEGGINGS, toProtocolItem(replacement, inventory.getLeggings())),
+      new Equipment(EquipmentSlot.CHEST_PLATE, toProtocolItem(replacement, inventory.getChestplate())),
+      new Equipment(EquipmentSlot.HELMET, toProtocolItem(replacement, inventory.getHelmet())));
+    PacketEvents.getAPI().getPlayerManager().sendPacket(
+        viewer, new WrapperPlayServerEntityEquipment(target.getEntityId(), equipment));
+  }
+
+  private com.github.retrooper.packetevents.protocol.item.ItemStack toProtocolItem(
+      ItemStack replacement, ItemStack actual) {
+    ItemStack item = replacement == null ? actual : replacement;
+    return SpigotConversionUtil.fromBukkitItemStack(item == null ? new ItemStack(org.bukkit.Material.AIR) : item);
   }
  
   // ---------------------------------------------------------------------
