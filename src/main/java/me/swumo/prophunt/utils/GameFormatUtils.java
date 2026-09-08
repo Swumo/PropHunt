@@ -1,5 +1,6 @@
 package me.swumo.prophunt.utils;
 
+import org.bukkit.Location;
 import org.bukkit.Material;
 
 public final class GameFormatUtils {
@@ -26,5 +27,14 @@ public final class GameFormatUtils {
         if (material == null) return "Unknown";
 
         return StringUtils.capitalize(material.name());
+    }
+
+    public static String formatLocation(Location location){
+        if (location == null) return "Unknown";
+        return String.format("World: %s, X: %.2f, Y: %.2f, Z: %.2f",
+                location.getWorld().getName(),
+                location.getX(),
+                location.getY(),
+                location.getZ());
     }
 }

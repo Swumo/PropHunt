@@ -1447,7 +1447,7 @@ public class GameManager {
                 "&6Arena {arena}&7 | cuboid={cuboid} | hiderSpawns={hiders} | seekerSpawns={seekers}",
                 Map.of(
                         "arena", info.key(),
-                        "cuboid", "(" + info.pos1().toBlockLocation().toString() + " -> " + info.pos2().toBlockLocation().toString() + ")",
+                        "cuboid", "(" + GameFormatUtils.formatLocation(info.pos1().toBlockLocation()) + " -> " + GameFormatUtils.formatLocation(info.pos2().toBlockLocation()) + ")",
                         "hiders", info.hiderSpawnCount(),
                         "seekers", info.seekerSpawnCount()));
     }
