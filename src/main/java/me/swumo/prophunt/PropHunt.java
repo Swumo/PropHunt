@@ -7,6 +7,7 @@ import com.github.retrooper.packetevents.manager.protocol.ProtocolManager;
 import lombok.Getter;
 import me.swumo.prophunt.commands.PropHuntCommand;
 import me.swumo.prophunt.game.GameManager;
+import me.swumo.prophunt.game.HiderData;
 import me.swumo.prophunt.listeners.GameListeners;
 import me.swumo.prophunt.platform.PlatformScheduler;
 import net.kyori.adventure.text.Component;
@@ -58,6 +59,7 @@ public class PropHunt extends JavaPlugin {
         platformScheduler = new PlatformScheduler(this);
         getLogger().info("Detected platform: " + (platformScheduler.isFolia() ? "Folia" : "Paper"));
         InvUI.getInstance().setPlugin(this);
+        HiderData.initializeVerticalSpaceRequirements();
         gameManager = new GameManager(this);
         getServer().getPluginManager().registerEvents(new GameListeners(this), this);
         registerCommands();

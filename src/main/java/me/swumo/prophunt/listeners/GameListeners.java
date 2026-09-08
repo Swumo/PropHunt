@@ -3,6 +3,8 @@ package me.swumo.prophunt.listeners;
 import me.swumo.prophunt.PropHunt;
 import me.swumo.prophunt.game.GameManager;
 import me.swumo.prophunt.game.HiderData;
+import io.papermc.paper.event.player.PlayerTrackEntityEvent;
+import io.papermc.paper.event.player.PlayerUntrackEntityEvent;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Tag;
@@ -441,6 +443,16 @@ public class GameListeners implements Listener {
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
         gm().handlePlayerJoin(event.getPlayer());
+    }
+
+    @EventHandler
+    public void onPlayerTrackEntity(PlayerTrackEntityEvent event) {
+        gm().handlePlayerTrackEntity(event.getPlayer(), event.getEntity());
+    }
+
+    @EventHandler
+    public void onPlayerUntrackEntity(PlayerUntrackEntityEvent event) {
+        gm().handlePlayerUntrackEntity(event.getPlayer(), event.getEntity());
     }
 
     // Hiders cant die during gameplay, so cancel any death events and suppress the

@@ -235,6 +235,23 @@ public final class BlockDisguiseManager {
       }
     }
   }
+
+  /** Delivers an active disguise when a viewer starts tracking its real mount. */
+  public void trackViewer(Player target, Player viewer) {
+    ActiveDisguise disguise = activeDisguises.get(target.getUniqueId());
+    if (disguise != null && viewer != null && viewer.isOnline()
+        && disguise.sentViewerIds().add(viewer.getUniqueId())) {
+      sendDisguise(viewer, target, disguise);
+    }
+  }
+
+  /** Forgets a viewer that no longer tracks the real-player mount. */
+  public void untrackViewer(Player target, Player viewer) {
+    ActiveDisguise disguise = activeDisguises.get(target.getUniqueId());
+    if (disguise != null && viewer != null) {
+      disguise.sentViewerIds().remove(viewer.getUniqueId());
+    }
+  }
  
   /** Removes the disguise and un-hides the real player model. */
   public void undisguise(Player target, List<Player> viewers) {

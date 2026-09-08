@@ -20,6 +20,7 @@ import org.bukkit.*;
 import org.bukkit.block.BlockFace;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Interaction;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemFlag;
@@ -448,7 +449,11 @@ public class GameManager {
                 continue;
             }
 
-            data.updateMobileDisguisePosition(p, displayAudience.values());
+            UUID replacedHitboxId = data.updateMobileDisguisePosition(p, displayAudience.values());
+            if (replacedHitboxId != null) {
+                disguiseEntityOwners.remove(replacedHitboxId);
+                indexDisguiseEntities(p.getUniqueId(), data);
+            }
             if (isInBlockSelectionMenu(p)) {
                 data.resetStillTicks();
                 continue;
@@ -550,8 +555,8 @@ public class GameManager {
         p.setInvisible(true);
         data.setLockedAnchor(anchor);
         data.placeWorldBlock(anchor, p);
+        removeDisguiseEntityIndex(data);
         data.removeMobileDisguise();
-        removeDisguiseEntityIndex(p.getUniqueId());
 
         // Keep hiders in adventure so they remain valid spectator-teleport targets.
         p.setGameMode(GameMode.ADVENTURE);
@@ -835,6 +840,7 @@ public class GameManager {
         p.setGravity(true);
         p.teleport(revealLoc);
         p.setInvisible(true);
+        removeDisguiseEntityIndex(data);
         data.applyMobileDisguise(p, displayAudience.values());
         indexDisguiseEntities(p.getUniqueId(), data);
         GameMessageUtils.sendTitle(p, msg("titles.unlocked.title", "&eUNLOCKED"),
@@ -880,14 +886,15 @@ public class GameManager {
     }
 
     private void indexDisguiseEntities(UUID hiderId, HiderData data) {
-        removeDisguiseEntityIndex(hiderId);
         Interaction hitbox = data.getPropHitbox();
         if (hitbox != null)
             disguiseEntityOwners.put(hitbox.getUniqueId(), hiderId);
     }
 
-    private void removeDisguiseEntityIndex(UUID hiderId) {
-        disguiseEntityOwners.values().removeIf(hiderId::equals);
+    private void removeDisguiseEntityIndex(HiderData data) {
+        Interaction hitbox = data.getPropHitbox();
+        if (hitbox != null)
+            disguiseEntityOwners.remove(hitbox.getUniqueId());
     }
 
     public boolean handleHiderBlockHit(Player seeker, Location blockLocation) {
@@ -940,8 +947,8 @@ public class GameManager {
             if (data == null)
                 return;
 
+            removeDisguiseEntityIndex(data);
             data.clearDisguise();
-            removeDisguiseEntityIndex(uid);
             clearHiderTrackingState(uid);
             spectators.add(uid);
 
@@ -1012,8 +1019,8 @@ public class GameManager {
                 hidersWin ? msg("titles.hiders-win.subtitle", "&eRound over")
                         : msg("titles.seekers-win.subtitle", "&eRound over"));
         for (Map.Entry<UUID, HiderData> e : hiders.entrySet()) {
+            removeDisguiseEntityIndex(e.getValue());
             e.getValue().clearDisguise();
-            removeDisguiseEntityIndex(e.getKey());
             Player p = Bukkit.getPlayer(e.getKey());
             if (p != null) {
                 removeHiderMenuItem(p);
@@ -1126,8 +1133,8 @@ public class GameManager {
 
         HiderData data = hiders.get(p.getUniqueId());
         if (data != null) {
+            removeDisguiseEntityIndex(data);
             data.clearDisguise();
-            removeDisguiseEntityIndex(p.getUniqueId());
         }
 
         hiders.remove(p.getUniqueId());
@@ -1194,6 +1201,24 @@ public class GameManager {
             return;
 
         resetPlayerAfterGame(player, GameMode.ADVENTURE);
+    }
+
+    public void handlePlayerTrackEntity(Player viewer, Entity entity) {
+        if (!(entity instanceof Player hider) || !displayAudience.containsKey(viewer.getUniqueId()))
+            return;
+
+        HiderData data = hiders.get(hider.getUniqueId());
+        if (data != null && !data.isLocked())
+            data.trackViewer(hider, viewer);
+    }
+
+    public void handlePlayerUntrackEntity(Player viewer, Entity entity) {
+        if (!(entity instanceof Player hider))
+            return;
+
+        HiderData data = hiders.get(hider.getUniqueId());
+        if (data != null)
+            data.untrackViewer(hider, viewer);
     }
 
     private void assignPlayerToNoCollisionTeam(Player player, boolean hiderRole) {
@@ -1297,6 +1322,7 @@ public class GameManager {
 
             Player hider = Bukkit.getPlayer(entry.getKey());
             if (hider != null && hider.isOnline()) {
+                removeDisguiseEntityIndex(data);
                 data.applyMobileDisguise(hider, displayAudience.values());
                 indexDisguiseEntities(hider.getUniqueId(), data);
             }
@@ -1521,15 +1547,28 @@ public class GameManager {
     }
 
     private void cacheArenaBlockPool(ArenaRuntime arena) {
-        if (arena == null || arena.isBlockPoolGenerated())
+        if (arena == null)
             return;
 
-        arena.cacheBlockPool(ArenaUtils.sampleArenaBlocks(
+        long generation = arena.beginBlockPoolGeneration();
+        if (generation < 0)
+            return;
+
+        ArenaUtils.sampleArenaBlocks(
                 arena.pos1,
                 arena.pos2,
                 arenaScanMaxBlocks,
                 arenaMinBlockOccurrences,
-                this::isAllowedPropMaterial));
+                this::isAllowedPropMaterial)
+                .whenComplete((blockPool, throwable) -> {
+                    if (throwable != null) {
+                        plugin.getLogger().warning("Failed to sample arena block pool: " + throwable.getMessage());
+                        arena.cacheBlockPool(generation, Collections.emptyList());
+                        return;
+                    }
+
+                    arena.cacheBlockPool(generation, blockPool);
+                });
     }
 
     private void teleportToRandomSpawn(Player p, List<Location> spawns) {
@@ -1718,8 +1757,8 @@ public class GameManager {
         if (data == null)
             return null;
 
+        removeDisguiseEntityIndex(data);
         data.clearDisguise();
-        removeDisguiseEntityIndex(playerId);
         clearHiderTrackingState(playerId);
         assignPlayerToSeekerTeam(playerId);
         return data;
@@ -1932,6 +1971,7 @@ public class GameManager {
             return false;
         }
         data.setChosenBlock(block);
+        removeDisguiseEntityIndex(data);
         data.clearDisguise();
         data.applyMobileDisguise(p, displayAudience.values());
         indexDisguiseEntities(p.getUniqueId(), data);

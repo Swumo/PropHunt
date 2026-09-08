@@ -23,17 +23,23 @@ import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Getter
 public class HiderData {
     private static final BlockDisguiseManager BLOCK_DISGUISES = new BlockDisguiseManager();
+    private static final EnumMap<Material, Boolean> VERTICAL_SPACE_REQUIREMENTS = new EnumMap<>(Material.class);
+    private static boolean verticalSpaceRequirementsInitialized;
     private final UUID uuid;
     private Material chosenBlock;
     private BlockData baseBlockData;
     private BlockFace mobileFacing;
     private final List<UUID> disguiseViewerIds = new ArrayList<>();
+    private final Set<UUID> trackedViewerIds = new HashSet<>();
     private Interaction propHitbox;
     private Location placedBlockLocation;
     private Location lockedPlayerLocation;
@@ -79,6 +85,7 @@ public class HiderData {
 
         Location anchor = toDisplayAnchor(player.getLocation());
         mobileFacing = resolveHorizontalFace(player);
+        seedTrackedViewers(player);
 
         List<Player> activeViewers = activeViewers(player, viewers);
         BlockData orientedData = createOrientedBlockData(player);
@@ -109,22 +116,25 @@ public class HiderData {
             propHitbox.remove();
 
         disguiseViewerIds.clear();
+        trackedViewerIds.clear();
         propHitbox = null;
         mobileFacing = null;
     }
 
     // Update the position of the block display and the interaction hitbox to match
     // the player's current location
-    public void updateMobileDisguisePosition(Player player, Collection<? extends Player> viewers) {
+    public UUID updateMobileDisguisePosition(Player player, Collection<? extends Player> viewers) {
         if (player == null)
-            return;
+            return null;
 
         if (requiresFacingRefresh(player)) {
+            UUID previousHitboxId = propHitbox == null ? null : propHitbox.getUniqueId();
             applyMobileDisguise(player, viewers);
-            return;
+            return previousHitboxId;
         }
 
         updateDisguisePosition(player.getLocation(), player, viewers);
+        return null;
     }
 
     private boolean requiresFacingRefresh(Player player) {
@@ -150,14 +160,36 @@ public class HiderData {
         if (chosenBlock == null || anchorSource == null || orientationSource == null)
             return;
 
-        BLOCK_DISGUISES.syncViewers(orientationSource, activeViewers(orientationSource, viewers));
-
         if (propHitbox != null && !propHitbox.isDead())
             propHitbox.teleport(toDisplayAnchor(anchorSource));
     }
 
+    public void trackViewer(Player target, Player viewer) {
+        if (viewer == null)
+            return;
+
+        trackedViewerIds.add(viewer.getUniqueId());
+        if (!disguiseViewerIds.contains(viewer.getUniqueId()))
+            disguiseViewerIds.add(viewer.getUniqueId());
+        BLOCK_DISGUISES.trackViewer(target, viewer);
+    }
+
+    public void untrackViewer(Player target, Player viewer) {
+        if (viewer == null)
+            return;
+
+        trackedViewerIds.remove(viewer.getUniqueId());
+        BLOCK_DISGUISES.untrackViewer(target, viewer);
+    }
+
+    private void seedTrackedViewers(Player target) {
+        trackedViewerIds.clear();
+        for (Player viewer : target.getTrackedBy()) {
+            trackedViewerIds.add(viewer.getUniqueId());
+        }
+    }
+
     private List<Player> activeViewers(Player target, Collection<? extends Player> viewers) {
-        disguiseViewerIds.clear();
         List<Player> activeViewers = new ArrayList<>();
         if (viewers == null)
             return activeViewers;
@@ -167,8 +199,9 @@ public class HiderData {
                     || !target.getWorld().equals(viewer.getWorld()))
                 continue;
 
-            disguiseViewerIds.add(viewer.getUniqueId());
-            if (viewer.equals(target) || target.getTrackedBy().contains(viewer))
+            if (!disguiseViewerIds.contains(viewer.getUniqueId()))
+                disguiseViewerIds.add(viewer.getUniqueId());
+            if (viewer.equals(target) || trackedViewerIds.contains(viewer.getUniqueId()))
                 activeViewers.add(viewer);
         }
         return activeViewers;
@@ -281,10 +314,22 @@ public class HiderData {
     }
 
     public static boolean requiresVerticalSpace(Material material) {
-        if (material == null || !material.isBlock() || material.isAir())
+        if (material == null)
             return false;
 
-        return isTrueTwoBlockDisguise(material.createBlockData());
+        return VERTICAL_SPACE_REQUIREMENTS.getOrDefault(material, false);
+    }
+
+    public static synchronized void initializeVerticalSpaceRequirements() {
+        if (verticalSpaceRequirementsInitialized)
+            return;
+
+        for (Material material : Material.values()) {
+            if (material.isBlock() && !material.isAir()) {
+                VERTICAL_SPACE_REQUIREMENTS.put(material, isTrueTwoBlockDisguise(material.createBlockData()));
+            }
+        }
+        verticalSpaceRequirementsInitialized = true;
     }
 
     public static boolean requiresHorizontalSpace(Material material) {

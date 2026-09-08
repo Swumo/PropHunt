@@ -16,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Predicate;
 
 public final class ArenaUtils {
@@ -84,6 +85,8 @@ public final class ArenaUtils {
         public final List<Location> seekerSpawns;
         private List<Material> cachedBlockPool = Collections.emptyList();
         private boolean blockPoolGenerated;
+        private boolean blockPoolGenerationPending;
+        private long blockPoolGeneration;
 
         public ArenaRuntime(String name, String world, Location pos1, Location pos2,
                 List<Location> hiderSpawns, List<Location> seekerSpawns) {
@@ -111,14 +114,28 @@ public final class ArenaUtils {
             return blockPoolGenerated;
         }
 
-        public synchronized void cacheBlockPool(List<Material> blockPool) {
+        public synchronized long beginBlockPoolGeneration() {
+            if (blockPoolGenerated || blockPoolGenerationPending)
+                return -1L;
+
+            blockPoolGenerationPending = true;
+            return blockPoolGeneration;
+        }
+
+        public synchronized void cacheBlockPool(long generation, List<Material> blockPool) {
+            if (generation != blockPoolGeneration)
+                return;
+
             cachedBlockPool = List.copyOf(blockPool);
             blockPoolGenerated = true;
+            blockPoolGenerationPending = false;
         }
 
         public synchronized void invalidateBlockPool() {
             cachedBlockPool = Collections.emptyList();
             blockPoolGenerated = false;
+            blockPoolGenerationPending = false;
+            blockPoolGeneration++;
         }
     }
 
@@ -314,14 +331,14 @@ public final class ArenaUtils {
     // Block pool sampling
     // -------------------------------------------------------------------------
 
-    public static List<Material> sampleArenaBlocks(
+    public static CompletableFuture<List<Material>> sampleArenaBlocks(
             Location pos1,
             Location pos2,
             int arenaScanMaxBlocks,
             int minOccurrences,
             Predicate<Material> allowMaterial) {
         if (pos1 == null || pos2 == null || pos1.getWorld() == null || pos2.getWorld() == null) {
-            return Collections.emptyList();
+            return CompletableFuture.completedFuture(Collections.emptyList());
         }
 
         World world = pos1.getWorld();
@@ -332,13 +349,54 @@ public final class ArenaUtils {
         int minZ = Math.min(pos1.getBlockZ(), pos2.getBlockZ());
         int maxZ = Math.max(pos1.getBlockZ(), pos2.getBlockZ());
 
+        if (minY > maxY)
+            return CompletableFuture.completedFuture(Collections.emptyList());
+
+        List<CompletableFuture<ChunkSnapshot>> snapshotFutures = new ArrayList<>();
+        long snapshottedBlocks = 0L;
+        boolean snapshotLimitReached = false;
+        for (int chunkX = Math.floorDiv(minX, 16); chunkX <= Math.floorDiv(maxX, 16) && !snapshotLimitReached;
+                chunkX++) {
+            for (int chunkZ = Math.floorDiv(minZ, 16); chunkZ <= Math.floorDiv(maxZ, 16) && !snapshotLimitReached;
+                    chunkZ++) {
+            snapshotFutures.add(world.getChunkAtAsync(chunkX, chunkZ).thenApply(chunk -> chunk.getChunkSnapshot()));
+
+                int chunkMinX = chunkX * 16;
+                int chunkMaxX = chunkMinX + 15;
+                int chunkMinZ = chunkZ * 16;
+                int chunkMaxZ = chunkMinZ + 15;
+                long chunkBlockCount = (long) (Math.min(maxX, chunkMaxX) - Math.max(minX, chunkMinX) + 1)
+                        * (maxY - minY + 1L)
+                        * (Math.min(maxZ, chunkMaxZ) - Math.max(minZ, chunkMinZ) + 1);
+                snapshottedBlocks += chunkBlockCount;
+                snapshotLimitReached = snapshottedBlocks >= arenaScanMaxBlocks;
+            }
+        }
+
+        return CompletableFuture.allOf(snapshotFutures.toArray(CompletableFuture[]::new))
+                .thenApplyAsync(ignored -> scanSnapshots(snapshotFutures, minX, maxX, minY, maxY, minZ, maxZ,
+                        arenaScanMaxBlocks, minOccurrences, allowMaterial));
+    }
+
+    private static List<Material> scanSnapshots(
+            List<CompletableFuture<ChunkSnapshot>> snapshotFutures,
+            int minX,
+            int maxX,
+            int minY,
+            int maxY,
+            int minZ,
+            int maxZ,
+            int arenaScanMaxBlocks,
+            int minOccurrences,
+            Predicate<Material> allowMaterial) {
         Map<Material, Integer> counts = new HashMap<>();
         int scanned = 0;
         boolean stop = false;
+        int snapshotIndex = 0;
 
         for (int chunkX = Math.floorDiv(minX, 16); chunkX <= Math.floorDiv(maxX, 16) && !stop; chunkX++) {
             for (int chunkZ = Math.floorDiv(minZ, 16); chunkZ <= Math.floorDiv(maxZ, 16) && !stop; chunkZ++) {
-                ChunkSnapshot chunk = world.getChunkAt(chunkX, chunkZ).getChunkSnapshot();
+                ChunkSnapshot chunk = snapshotFutures.get(snapshotIndex++).join();
                 int chunkMinX = chunkX * 16;
                 int chunkMaxX = chunkMinX + 15;
                 int chunkMinZ = chunkZ * 16;
@@ -352,12 +410,12 @@ public final class ArenaUtils {
                                 break;
                             }
 
+                            scanned++;
                             Material material = chunk.getBlockType(x & 15, y, z & 15);
                             if (!allowMaterial.test(material))
                                 continue;
 
                             counts.put(material, counts.getOrDefault(material, 0) + 1);
-                            scanned++;
                         }
                     }
                 }
