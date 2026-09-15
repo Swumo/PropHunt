@@ -58,6 +58,14 @@ public class HiderData {
         this.hp = maxHp;
     }
 
+    public static void setMobileEquipmentMaskingEnabled(boolean enabled) {
+        BLOCK_DISGUISES.setEquipmentMaskingEnabled(enabled);
+    }
+
+    public static void maskPlayerEquipment(Player player) {
+        BLOCK_DISGUISES.maskPlayerEquipment(player);
+    }
+
     public void setChosenBlock(Material chosenBlock) {
         this.chosenBlock = chosenBlock;
         this.baseBlockData = chosenBlock == null ? null : chosenBlock.createBlockData();
@@ -135,6 +143,11 @@ public class HiderData {
 
         updateDisguisePosition(player.getLocation(), player, viewers);
         return null;
+    }
+
+    public void refreshMobileDisguiseEquipment(Player player) {
+        if (player != null)
+            BLOCK_DISGUISES.refreshHiddenEquipment(player, resolveDisguiseViewers());
     }
 
     private boolean requiresFacingRefresh(Player player) {

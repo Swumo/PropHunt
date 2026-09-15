@@ -131,6 +131,18 @@ public class GameListeners implements Listener {
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
+    public void onHiderLeftClick(PlayerInteractEvent event) {
+        Action action = event.getAction();
+        if (action != Action.LEFT_CLICK_AIR && action != Action.LEFT_CLICK_BLOCK)
+            return;
+        if (event.getHand() != EquipmentSlot.HAND || !gm().isHider(event.getPlayer()))
+            return;
+
+        if (gm().solidifyHider(event.getPlayer()))
+            event.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlayerInteractBlock(PlayerInteractEvent event) {
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK || event.getClickedBlock() == null)
             return;
@@ -183,7 +195,8 @@ public class GameListeners implements Listener {
                     : player.getInventory().getItemInOffHand();
         }
         if (!gm().isHiderMenuItem(usedItem))
-            return;
+            if (!gm().isHiderTauntItem(usedItem))
+                return;
 
         if (hand == EquipmentSlot.OFF_HAND && gm().isHiderMenuItem(player.getInventory().getItemInMainHand())) {
             return;
@@ -192,7 +205,11 @@ public class GameListeners implements Listener {
         event.setUseInteractedBlock(Event.Result.DENY);
         event.setUseItemInHand(Event.Result.DENY);
         event.setCancelled(true);
-        gm().openHiderBlockSelectionMenu(player);
+        if (gm().isHiderTauntItem(usedItem)) {
+            gm().taunt(player);
+        } else {
+            gm().openHiderBlockSelectionMenu(player);
+        }
     }
 
     // Prevent seekers from moving their locked seeker weapon in their inventory or

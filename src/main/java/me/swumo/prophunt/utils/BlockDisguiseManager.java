@@ -1,9 +1,12 @@
 package me.swumo.prophunt.utils;
 
 import com.github.retrooper.packetevents.PacketEvents;
+import com.github.retrooper.packetevents.event.PacketListenerAbstract;
+import com.github.retrooper.packetevents.event.PacketSendEvent;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
+import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.protocol.player.Equipment;
 import com.github.retrooper.packetevents.protocol.player.EquipmentSlot;
 import com.github.retrooper.packetevents.protocol.world.states.WrappedBlockState;
@@ -83,9 +86,11 @@ public final class BlockDisguiseManager {
   private static final float ARENA_BORDER_HEIGHT = 30f;
  
   private final DisplayIndices indices;
+  private boolean equipmentMaskingEnabled;
  
   /** Real player UUID -> the active fake display and its recipient state. */
   private final Map<UUID, ActiveDisguise> activeDisguises = new HashMap<>();
+  private final Set<UUID> equipmentMaskedPlayerIds = new HashSet<>();
 
   /** Viewer UUID -> the four client-side display ids used for an arena border. */
   private final Map<UUID, int[]> activeArenaBorders = new HashMap<>();
@@ -97,6 +102,49 @@ public final class BlockDisguiseManager {
  
   public BlockDisguiseManager() {
     this.indices = resolveIndices();
+    PacketEvents.getAPI().getEventManager().registerListener(new PacketListenerAbstract() {
+      @Override
+      public void onPacketSend(PacketSendEvent event) {
+        if (!equipmentMaskingEnabled
+            || event.getPacketType() != PacketType.Play.Server.ENTITY_EQUIPMENT
+            || !(event.getPlayer() instanceof Player viewer)) {
+          return;
+        }
+
+        WrapperPlayServerEntityEquipment packet = new WrapperPlayServerEntityEquipment(event);
+        for (UUID targetId : equipmentMaskedPlayerIds) {
+          Player target = Bukkit.getPlayer(targetId);
+          if (target == null || target.equals(viewer) || target.getEntityId() != packet.getEntityId()) {
+            continue;
+          }
+
+          for (Equipment equipment : packet.getEquipment()) {
+            equipment.setItem(SpigotConversionUtil.fromBukkitItemStack(new ItemStack(Material.AIR)));
+          }
+          event.markForReEncode(true);
+          return;
+        }
+      }
+    });
+  }
+
+  public void setEquipmentMaskingEnabled(boolean equipmentMaskingEnabled) {
+    this.equipmentMaskingEnabled = equipmentMaskingEnabled;
+  }
+
+  public void maskPlayerEquipment(Player target) {
+    if (target != null) {
+      equipmentMaskedPlayerIds.add(target.getUniqueId());
+    }
+  }
+
+  public void unmaskPlayerEquipment(Player target) {
+    if (target == null || !equipmentMaskedPlayerIds.remove(target.getUniqueId())) {
+      return;
+    }
+    for (Player viewer : Bukkit.getOnlinePlayers()) {
+      restorePlayerEquipment(viewer, target);
+    }
   }
  
   // ---------------------------------------------------------------------
@@ -200,6 +248,7 @@ public final class BlockDisguiseManager {
     }
     ActiveDisguise disguise = new ActiveDisguise(displayIds, List.copyOf(parts), new HashSet<>());
     activeDisguises.put(target.getUniqueId(), disguise);
+    maskPlayerEquipment(target);
  
     for (Player viewer : viewers) {
       if (viewer != null && viewer.isOnline()
@@ -252,19 +301,34 @@ public final class BlockDisguiseManager {
       disguise.sentViewerIds().remove(viewer.getUniqueId());
     }
   }
+
+  /** Reapplies blank equipment after the server sends an inventory update. */
+  public void refreshHiddenEquipment(Player target, List<Player> viewers) {
+    ActiveDisguise disguise = activeDisguises.get(target.getUniqueId());
+    if (disguise == null) {
+      return;
+    }
+    for (Player viewer : viewers) {
+      if (viewer != null && viewer.isOnline()
+          && disguise.sentViewerIds().contains(viewer.getUniqueId())) {
+        hidePlayerEquipment(viewer, target);
+      }
+    }
+  }
  
   /** Removes the disguise and un-hides the real player model. */
   public void undisguise(Player target, List<Player> viewers) {
     ActiveDisguise disguise = activeDisguises.remove(target.getUniqueId());
     if (disguise == null) {
+      unmaskPlayerEquipment(target);
       return;
     }
     for (Player viewer : viewers) {
       PacketEvents.getAPI()
           .getPlayerManager()
           .sendPacket(viewer, new WrapperPlayServerDestroyEntities(disguise.entityIds()));
-      restorePlayerEquipment(viewer, target);
     }
+    unmaskPlayerEquipment(target);
   }
 
   /**
@@ -277,6 +341,14 @@ public final class BlockDisguiseManager {
     if (clearArenaBorder(viewer)) {
       return false;
     }
+
+    showArenaBorder(viewer, pos1, pos2);
+    return true;
+  }
+
+  /** Shows or replaces the client-side arena border for one viewer. */
+  public void showArenaBorder(Player viewer, Location pos1, Location pos2) {
+    clearArenaBorder(viewer);
 
     int minX = Math.min(pos1.getBlockX(), pos2.getBlockX());
     int maxX = Math.max(pos1.getBlockX(), pos2.getBlockX());
@@ -298,7 +370,6 @@ public final class BlockDisguiseManager {
       new Vector3f(0.125f, ARENA_BORDER_HEIGHT, depth));
     sendBorderDisplay(viewer, displayIds[3], new Location(pos1.getWorld(), maxX + 1, minY, minZ), glass,
       new Vector3f(0.125f, ARENA_BORDER_HEIGHT, depth));
-    return true;
   }
 
   public boolean clearArenaBorder(Player viewer) {

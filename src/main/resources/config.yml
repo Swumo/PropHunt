@@ -52,6 +52,12 @@ gameplay:
     # they cannot change their disguise block.
     hider-combat-tag-seconds: 6
 
+    # Hiders right-click their Taunt item to emit this sound from their location
+    # to seekers within range. Minecraft's positional audio makes it directional.
+    hider-taunt-cooldown-seconds: 20
+    hider-taunt-range: 48
+    hider-taunt-sound: minecraft:entity.goat.ambient
+
     # Namespaced Minecraft sound played to a seeker alongside the HIT confirmation.
     seeker-hit-sound: minecraft:entity.experience_orb.pickup
 
@@ -322,6 +328,8 @@ messages:
         hiders-win: "<gradient:#6EE7B7:#16A34A>=== HIDERS WIN! ===</gradient>"
         seekers-win: "<gradient:#FB7185:#DC2626>=== SEEKERS WIN! ===</gradient>"
         random-disguise: "<green>Random disguise: {block}</green>"
+        taunt-used: "<light_purple>Taunt sent!</light_purple>"
+        taunt-cooldown: "<yellow>Taunt available in {seconds}s.</yellow>"
         unlock-first: "<red>Unlock first by moving!</red>"
         cannot-solidify-block: "<red>You cannot solidify while standing in occupied space.</red>"
         cannot-solidify-floor: "<red>You cannot solidify on this surface.</red>"

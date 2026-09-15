@@ -38,8 +38,10 @@ import java.util.concurrent.ThreadLocalRandom;
 
 public class GameManager {
     public static final int SEEKER_WEAPON_SLOT = 0;
+    private static final int HIDER_TAUNT_SLOT = 7;
     private static final int HIDER_MENU_SLOT = 8;
     private static final String SEEKER_WEAPON_NAME = "§6Seeker Sword";
+    private static final String HIDER_TAUNT_ITEM_NAME = "§dTaunt";
     private static final String HIDER_MENU_ITEM_NAME = "§bBlock Picker";
     private static final String HIDER_NO_COLLISION_TEAM = "ph_hiders";
     private static final String SEEKER_NO_COLLISION_TEAM = "ph_seekers";
@@ -70,6 +72,7 @@ public class GameManager {
     private final Map<UUID, Location> frozenSeekers = new HashMap<>();
     private final Map<UUID, Long> lockedMovementGraceUntil = new HashMap<>();
     private final Map<UUID, Long> hiderCombatTagUntil = new HashMap<>();
+    private final Map<UUID, Long> hiderTauntCooldownUntil = new HashMap<>();
     private final Map<UUID, Long> cannotSolidifyMessageUntil = new HashMap<>();
     private final Map<UUID, ItemStack> seekerHeldItemSnapshots = new HashMap<>();
     private final Set<UUID> blockSelectionMenuPlayers = new HashSet<>();
@@ -99,6 +102,9 @@ public class GameManager {
     private int hiderCombatTagSeconds;
     private int cannotSolidifyMessageCooldownTicks;
     private Sound seekerHitSound;
+    private int hiderTauntCooldownSeconds;
+    private int hiderTauntRange;
+    private Sound hiderTauntSound;
     private int freezeBlindnessBufferSeconds;
     private int countdownTitleThresholdSeconds;
     private boolean timerBossBarEnabled;
@@ -260,6 +266,7 @@ public class GameManager {
         lastArenaPositions.clear();
         assignTeams(queuedOnlinePlayers);
         state = State.HIDING_PHASE;
+        HiderData.setMobileEquipmentMaskingEnabled(true);
 
         List<String> seekerNames = seekers.stream()
             .map(Bukkit::getPlayer)
@@ -298,6 +305,7 @@ public class GameManager {
 
         assignSeekersForRoundStart();
         assignHidersForRoundStart();
+        showSelectedArenaBorder();
         plugin.getPlatformScheduler().runGlobalLater(this::refreshMobileDisguises, 2L);
 
         PlatformScheduler scheduler = plugin.getPlatformScheduler();
@@ -454,6 +462,7 @@ public class GameManager {
                 disguiseEntityOwners.remove(replacedHitboxId);
                 indexDisguiseEntities(p.getUniqueId(), data);
             }
+            data.refreshMobileDisguiseEquipment(p);
             if (isInBlockSelectionMenu(p)) {
                 data.resetStillTicks();
                 continue;
@@ -528,7 +537,18 @@ public class GameManager {
         return (dx * dx + dy * dy + dz * dz) < 0.001;
     }
 
-    private void lockHider(Player p, HiderData data) {
+    public boolean solidifyHider(Player p) {
+        if (p == null || (state != State.HIDING_PHASE && state != State.SEEKING_PHASE))
+            return false;
+
+        HiderData data = hiders.get(p.getUniqueId());
+        if (data == null || data.isLocked() || data.getChosenBlock() == null)
+            return false;
+
+        return lockHider(p, data);
+    }
+
+    private boolean lockHider(Player p, HiderData data) {
         Material chosenBlock = data.getChosenBlock();
         Location anchor = getFloorAnchorLocation(p, data.getChosenBlock());
         if (anchor == null) {
@@ -540,14 +560,14 @@ public class GameManager {
                     msg("titles.unlocked.subtitle", "&aKeep moving"));
                     sendCannotSolidifyMessage(p, "messages.game.cannot-solidify-floor",
                         "&cYou cannot solidify on this surface.");
-                    return;
+                    return false;
                 }
                 if (isLockedHiderBlock(anchor)) {
                     data.setLocked(false);
                     data.resetStillTicks();
                     sendCannotSolidifyMessage(p, "messages.game.cannot-solidify-block",
                         "&cYou cannot solidify while standing in occupied space.");
-            return;
+            return false;
         }
 
         data.setLocked(true);
@@ -557,6 +577,7 @@ public class GameManager {
         data.placeWorldBlock(anchor, p);
         removeDisguiseEntityIndex(data);
         data.removeMobileDisguise();
+        HiderData.maskPlayerEquipment(p);
 
         // Keep hiders in adventure so they remain valid spectator-teleport targets.
         p.setGameMode(GameMode.ADVENTURE);
@@ -576,6 +597,7 @@ public class GameManager {
                 ? chosen.createBlockData().getSoundGroup().getPlaceSound()
                 : Sound.BLOCK_STONE_PLACE;
         p.playSound(p.getLocation(), placeSound, 1f, 1f);
+        return true;
     }
 
     private Location getFloorAnchorLocation(Player p, Material chosenBlock) {
@@ -1050,6 +1072,8 @@ public class GameManager {
     }
 
     private void cleanup() {
+        HiderData.setMobileEquipmentMaskingEnabled(false);
+        arenaBorderDisplays.clearAllArenaBorders();
         unregisterCollisionTeams();
         hiders.clear();
         disguiseEntityOwners.clear();
@@ -1061,6 +1085,7 @@ public class GameManager {
         frozenSeekers.clear();
         lockedMovementGraceUntil.clear();
         hiderCombatTagUntil.clear();
+        hiderTauntCooldownUntil.clear();
         cannotSolidifyMessageUntil.clear();
         clearTimerBossBar();
         clearSeekerReleaseBossBar();
@@ -1468,6 +1493,18 @@ public class GameManager {
         return msg("messages.arena.not-found", "&cArena not found: {arena}", Map.of("arena", key));
     }
 
+    private void showSelectedArenaBorder() {
+        if (selectedArena == null || !selectedArena.hasCuboid())
+            return;
+
+        for (UUID playerId : allParticipantIds()) {
+            Player player = Bukkit.getPlayer(playerId);
+            if (player != null && player.isOnline()) {
+                arenaBorderDisplays.showArenaBorder(player, selectedArena.pos1, selectedArena.pos2);
+            }
+        }
+    }
+
     private String setArenaPos(Player player, String name, String posKey) {
         ArenaUtils.ArenaMutationResult result = ArenaUtils.setArenaPos(plugin.getArenaConfig(), player, name, posKey);
         if (result.status() == ArenaUtils.ArenaMutationStatus.NOT_FOUND) {
@@ -1568,6 +1605,16 @@ public class GameManager {
                     }
 
                     arena.cacheBlockPool(generation, blockPool);
+                    plugin.getPlatformScheduler().runGlobalLater(() -> {
+                        if (selectedArena != arena
+                                || (state != State.HIDING_PHASE && state != State.SEEKING_PHASE))
+                            return;
+
+                        currentArenaBlockPool.clear();
+                        currentArenaBlockPool.addAll(blockPool);
+                        if (currentArenaBlockPool.isEmpty())
+                            currentArenaBlockPool.addAll(defaultHiderBlocks);
+                    }, 1L);
                 });
     }
 
@@ -1682,6 +1729,7 @@ public class GameManager {
         player.setInvisible(true);
         assignPlayerToNoCollisionTeam(player, true);
         giveHiderMenuItem(player);
+        giveHiderTauntItem(player);
         assignRandomBlock(player);
         GameMessageUtils.sendTitle(player,
                 msg("titles.hider-role.title", "&aYou are a HIDER"),
@@ -2024,6 +2072,41 @@ public class GameManager {
         return meta != null && matchesItemDisplayName(meta, HIDER_MENU_ITEM_NAME);
     }
 
+    public boolean isHiderTauntItem(ItemStack item) {
+        if (item == null || item.getType() != Material.AMETHYST_SHARD || !item.hasItemMeta())
+            return false;
+
+        ItemMeta meta = item.getItemMeta();
+        return meta != null && matchesItemDisplayName(meta, HIDER_TAUNT_ITEM_NAME);
+    }
+
+    public boolean taunt(Player hider) {
+        if (hider == null || state != State.SEEKING_PHASE || !isHider(hider))
+            return false;
+
+        long now = System.currentTimeMillis();
+        Long cooldownUntil = hiderTauntCooldownUntil.get(hider.getUniqueId());
+        if (cooldownUntil != null && now < cooldownUntil) {
+            long seconds = (long) Math.ceil((cooldownUntil - now) / 1000.0);
+            sendMessage(hider, msg("messages.game.taunt-cooldown", "&eTaunt available in {seconds}s.",
+                    Map.of("seconds", seconds)));
+            return false;
+        }
+
+        double rangeSquared = hiderTauntRange * (double) hiderTauntRange;
+        for (UUID seekerId : seekers) {
+            Player seeker = Bukkit.getPlayer(seekerId);
+            if (seeker != null && seeker.isOnline() && seeker.getWorld().equals(hider.getWorld())
+                    && seeker.getLocation().distanceSquared(hider.getLocation()) <= rangeSquared) {
+                seeker.playSound(hider.getLocation(), hiderTauntSound, 1f, 1f);
+            }
+        }
+
+        hiderTauntCooldownUntil.put(hider.getUniqueId(), now + hiderTauntCooldownSeconds * 1000L);
+        sendMessage(hider, msg("messages.game.taunt-used", "&dTaunt sent!"));
+        return true;
+    }
+
     private boolean matchesItemDisplayName(ItemMeta meta, String expectedName) {
         if (meta == null || expectedName == null)
             return false;
@@ -2053,6 +2136,19 @@ public class GameManager {
         inventory.setItem(HIDER_MENU_SLOT, createHiderMenuItem());
     }
 
+    private void giveHiderTauntItem(Player player) {
+        PlayerInventory inventory = player.getInventory();
+        ItemStack item = new ItemStack(Material.AMETHYST_SHARD);
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.displayName(Component.text(HIDER_TAUNT_ITEM_NAME));
+            meta.setUnbreakable(true);
+            meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_UNBREAKABLE);
+            item.setItemMeta(meta);
+        }
+        inventory.setItem(HIDER_TAUNT_SLOT, item);
+    }
+
     private void removeHiderMenuItem(Player player) {
         if (player == null)
             return;
@@ -2061,6 +2157,9 @@ public class GameManager {
         ItemStack[] contents = inventory.getContents();
         for (int slot = 0; slot < contents.length; slot++) {
             if (isHiderMenuItem(contents[slot])) {
+                inventory.setItem(slot, new ItemStack(Material.AIR));
+            }
+            if (isHiderTauntItem(contents[slot])) {
                 inventory.setItem(slot, new ItemStack(Material.AIR));
             }
         }
@@ -2310,6 +2409,10 @@ public class GameManager {
         playersPerSeeker = GameConfigReader.intSetting(config, "gameplay.players-per-seeker", null, 3, 1);
         seekerHitCooldownTicks = GameConfigReader.intSetting(config, "gameplay.seeker-hit-cooldown-ticks", null, 4, 0);
         hiderCombatTagSeconds = GameConfigReader.intSetting(config, "gameplay.hider-combat-tag-seconds", null, 6, 0);
+        hiderTauntCooldownSeconds = GameConfigReader.intSetting(config, "gameplay.hider-taunt-cooldown-seconds", null, 20, 0);
+        hiderTauntRange = GameConfigReader.intSetting(config, "gameplay.hider-taunt-range", null, 48, 1);
+        hiderTauntSound = readSound(config.getString("gameplay.hider-taunt-sound"),
+            Registry.SOUNDS.get(NamespacedKey.minecraft("entity.goat.ambient")));
         cannotSolidifyMessageCooldownTicks = GameConfigReader.intSetting(config,
             "gameplay.cannot-solidify-message-cooldown-ticks", null, 40, 0);
         seekerHitSound = readSound(config.getString("gameplay.seeker-hit-sound"),

@@ -170,19 +170,85 @@ public class PropHunt extends JavaPlugin {
             for (String path : defaults.getKeys(true)) {
                 if (defaults.isConfigurationSection(path))
                     continue;
-                if (!targetConfig.isSet(path)) {
+                if (!targetConfig.contains(path, true)) {
                     targetConfig.set(path, defaults.get(path));
                     changed = true;
                 }
             }
 
-            if (changed) {
+            boolean reordered = reorderDefaultEntries(targetConfig, defaults);
+            if (changed || reordered) {
                 saveAction.run();
-                getLogger().info("Added missing config entries to " + resourceName);
+                if (changed) {
+                    getLogger().info("Added missing config entries to " + resourceName);
+                }
             }
         } catch (Exception exception) {
             getLogger().warning("Failed to merge missing defaults from " + resourceName + ": " + exception.getMessage());
         }
+    }
+
+    private boolean reorderDefaultEntries(FileConfiguration targetConfig, YamlConfiguration defaults) {
+        List<String> defaultPaths = defaults.getKeys(true).stream()
+                .filter(path -> !defaults.isConfigurationSection(path))
+                .toList();
+        Map<String, Integer> defaultPathOrder = new HashMap<>();
+        for (int index = 0; index < defaultPaths.size(); index++) {
+            defaultPathOrder.put(defaultPaths.get(index), index);
+        }
+
+        int previousOrder = -1;
+        boolean requiresReordering = false;
+        for (String path : targetConfig.getKeys(true)) {
+            if (targetConfig.isConfigurationSection(path))
+                continue;
+
+            Integer currentOrder = defaultPathOrder.get(path);
+            if (currentOrder != null && currentOrder < previousOrder) {
+                requiresReordering = true;
+                break;
+            }
+            if (currentOrder != null)
+                previousOrder = currentOrder;
+        }
+        if (!requiresReordering)
+            return false;
+
+        Map<String, Object> values = new LinkedHashMap<>();
+        Map<String, List<String>> comments = new HashMap<>();
+        Map<String, List<String>> inlineComments = new HashMap<>();
+        for (String path : defaultPaths) {
+            values.put(path, targetConfig.get(path));
+        }
+        for (String path : targetConfig.getKeys(true)) {
+            if (!targetConfig.isConfigurationSection(path)) {
+                values.putIfAbsent(path, targetConfig.get(path));
+            }
+        }
+        for (String path : targetConfig.getKeys(true)) {
+            List<String> pathComments = new ArrayList<>(targetConfig.getComments(path));
+            List<String> pathInlineComments = new ArrayList<>(targetConfig.getInlineComments(path));
+            if (pathComments.isEmpty() && defaults.contains(path)) {
+                pathComments.addAll(defaults.getComments(path));
+            }
+            if (pathInlineComments.isEmpty() && defaults.contains(path)) {
+                pathInlineComments.addAll(defaults.getInlineComments(path));
+            }
+            comments.put(path, pathComments);
+            inlineComments.put(path, pathInlineComments);
+        }
+
+        for (String key : new ArrayList<>(targetConfig.getKeys(false))) {
+            targetConfig.set(key, null);
+        }
+        for (Map.Entry<String, Object> entry : values.entrySet()) {
+            targetConfig.set(entry.getKey(), entry.getValue());
+        }
+        for (String path : comments.keySet()) {
+            targetConfig.setComments(path, comments.get(path));
+            targetConfig.setInlineComments(path, inlineComments.get(path));
+        }
+        return true;
     }
 
     private void migrateLegacyArenaConfig() {
